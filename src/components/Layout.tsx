@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutGrid, LogOut, ChevronRight } from 'lucide-react';
+import { LayoutGrid, LogOut, ChevronRight, Settings } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import clsx from 'clsx';
 
@@ -46,6 +46,18 @@ export default function Layout({ children }: LayoutProps) {
           >
             <LayoutGrid size={15} />
             Clients
+          </Link>
+          <Link
+            to="/settings"
+            className={clsx(
+              'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors',
+              location.pathname === '/settings'
+                ? 'bg-brand-600 text-white'
+                : 'text-navy-200 hover:bg-navy-800 hover:text-white'
+            )}
+          >
+            <Settings size={15} />
+            Settings
           </Link>
         </nav>
 

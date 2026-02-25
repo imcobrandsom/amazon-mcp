@@ -6,6 +6,7 @@ import Layout from './components/Layout';
 import ClientOverview from './pages/ClientOverview';
 import ClientDetail from './pages/ClientDetail';
 import ConversationHistory from './pages/ConversationHistory';
+import Settings from './pages/Settings';
 
 function ProtectedRoutes() {
   const { session, loading } = useAuth();
@@ -46,6 +47,7 @@ function ProtectedRoutes() {
           path="/clients/:clientId/history"
           element={<ConversationHistory />}
         />
+        <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
