@@ -1,4 +1,4 @@
-import { createAdminClient } from './supabase-admin';
+import { createAdminClient } from './supabase-admin.js';
 
 // In-memory cache per function instance (~15min warm)
 let memCache: { accessToken: string; expiresAt: number } | null = null;

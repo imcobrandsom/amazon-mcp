@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import Anthropic from '@anthropic-ai/sdk';
-import { createAdminClient } from './_lib/supabase-admin';
-import { getAmazonAccessToken } from './_lib/amazon-token';
+import { createAdminClient } from './_lib/supabase-admin.js';
+import { getAmazonAccessToken } from './_lib/amazon-token.js';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 

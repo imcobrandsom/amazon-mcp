@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin';
+import { createAdminClient } from './_lib/supabase-admin.js';
 
 /**
  * PATCH /api/proposal

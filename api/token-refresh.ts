@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getAmazonAccessToken } from './_lib/amazon-token';
+import { getAmazonAccessToken } from './_lib/amazon-token.js';
 
 /**
  * GET /api/token-refresh
