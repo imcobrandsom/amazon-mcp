@@ -73,6 +73,39 @@ Your job:
 When you want to create a proposal (after user confirmation), call the create_proposal tool with the required fields.`;
 }
 
+const SUGGEST_CLIENT_TOOL: Anthropic.Tool = {
+  name: 'suggest_client_setup',
+  description:
+    'Call this tool whenever you have retrieved advertiser account or profile information from Amazon Ads (e.g. after calling list_advertiser_accounts or query_advertiser_account). Use it to surface a one-click "Add Client" card to the user with the profile data pre-filled.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      clientName: {
+        type: 'string',
+        description: 'Suggested client/brand name derived from the advertiser account name',
+      },
+      accountId: {
+        type: 'string',
+        description: 'Amazon advertiser account ID (if available)',
+      },
+      markets: {
+        type: 'array',
+        description: 'One entry per marketplace/profile found',
+        items: {
+          type: 'object',
+          properties: {
+            country_code: { type: 'string', description: 'ISO 3166-1 alpha-2 country code, e.g. NL' },
+            profile_id: { type: 'string', description: 'Amazon Advertiser Profile ID' },
+            currency: { type: 'string', description: 'Currency code, e.g. EUR' },
+          },
+          required: ['country_code', 'profile_id', 'currency'],
+        },
+      },
+    },
+    required: ['clientName', 'markets'],
+  },
+};
+
 const PROPOSAL_TOOL: Anthropic.Tool = {
   name: 'create_proposal',
   description:
@@ -168,12 +201,14 @@ Your job:
 2. Compare metrics across clients when relevant
 3. Use Amazon Profile IDs above to query data via MCP tools
 4. Always specify which client/market you're referencing
-5. Be concise. Use markdown tables for comparisons.`;
+5. Be concise. Use markdown tables for comparisons.
+6. IMPORTANT: Whenever you retrieve advertiser profiles or account data from Amazon Ads (e.g. via list_advertiser_accounts or query_advertiser_account), ALWAYS call the suggest_client_setup tool with the profile data so the user can add the client in one click. Do this in addition to your text reply.`;
 
       const globalResponse = await (anthropic.messages.create as Function)({
         model: 'claude-sonnet-4-5',
         max_tokens: 4096,
         system: globalPrompt,
+        tools: [SUGGEST_CLIENT_TOOL],
         messages: messages.map((m: { role: string; content: string }) => ({
           role: m.role,
           content: m.content,
@@ -182,13 +217,21 @@ Your job:
       });
 
       let globalText = '';
+      const globalToolCalls: Array<{ name: string; input: Record<string, unknown>; id: string }> = [];
       for (const block of globalResponse.content) {
         if (block.type === 'text') globalText += block.text;
+        else if (block.type === 'tool_use') {
+          globalToolCalls.push({
+            name: block.name,
+            input: block.input as Record<string, unknown>,
+            id: block.id,
+          });
+        }
       }
 
       return res.status(200).json({
         content: globalText,
-        toolCalls: [],
+        toolCalls: globalToolCalls,
         proposals: [],
         stopReason: globalResponse.stop_reason,
       });
