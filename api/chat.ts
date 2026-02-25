@@ -8,7 +8,8 @@ const anthropic = new Anthropic({
   defaultHeaders: { 'anthropic-beta': 'mcp-client-2025-04-04' },
 });
 
-const MCP_SERVER_URL = 'https://advertising-ai-eu.amazon.com/mcp';
+// Proxy URL — injects Amazon auth headers before forwarding to Amazon's MCP
+const MCP_SERVER_URL = `${process.env.APP_URL}/api/amazon-mcp-proxy`;
 
 interface ChatRequestBody {
   conversationId: string;
@@ -142,13 +143,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const supabase = createAdminClient();
     const accessToken = await getAmazonAccessToken();
 
-    // Build the MCP server config for Claude
+    // Build the MCP server config for Claude (auth handled by our proxy)
     const mcpServers = [
       {
         type: 'url' as const,
         url: MCP_SERVER_URL,
         name: 'amazon-ads',
-        authorization_token: accessToken,
       },
     ];
 
