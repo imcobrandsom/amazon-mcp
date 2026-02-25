@@ -73,6 +73,29 @@ export function sendChatMessage(params: {
   });
 }
 
+// Global chat (no specific client — Claude sees all clients)
+export function sendGlobalChatMessage(params: {
+  messages: LocalMessage[];
+}): Promise<ChatResponse> {
+  return post<ChatResponse>('/chat', {
+    conversationId: '__global__',
+    clientId: '__global__',
+    marketId: '__global__',
+    messages: params.messages,
+    clientContext: {
+      clientName: 'Global',
+      countryCode: '',
+      roasTarget: null,
+      dailyBudgetCap: null,
+      currency: '',
+      amazonAdvertiserProfileId: '',
+      amazonAdvertiserAccountId: '',
+    },
+    memory: [],
+    previousSummary: null,
+  });
+}
+
 // ---- Conversation summary ----
 
 export function generateSummary(params: {

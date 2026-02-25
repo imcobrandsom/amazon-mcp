@@ -135,7 +135,72 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     previousSummary,
   } = body;
 
-  if (!conversationId || !clientId || !messages?.length) {
+  if (!messages?.length) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  // ── Global chat mode: no specific client, load full portfolio ──────────────
+  if (clientId === '__global__') {
+    try {
+      const supabase = createAdminClient();
+
+      const { data: allClients } = await supabase
+        .from('clients')
+        .select('name, client_markets(country_code, roas_target, daily_budget_cap, currency, amazon_advertiser_profile_id, amazon_advertiser_account_id, state)')
+        .order('name');
+
+      const portfolioText = (allClients ?? []).map((c: Record<string, unknown>) => {
+        const mks = (c.client_markets as Record<string, unknown>[] ?? []);
+        const rows = mks.map((m: Record<string, unknown>) =>
+          `  - ${m.country_code}: Profile ${m.amazon_advertiser_profile_id}, ROAS ${m.roas_target ?? '—'}x, Budget ${m.currency} ${m.daily_budget_cap ?? '—'}/day (${m.state})`
+        ).join('\n');
+        return `${c.name}:\n${rows || '  (no markets)'}`;
+      }).join('\n\n');
+
+      const globalPrompt = `You are a marketplace optimization specialist for Follo, managing Amazon Advertising across a client portfolio.
+You have access to all clients' Amazon Ads data via MCP tools.
+
+[CLIENT PORTFOLIO]
+${portfolioText}
+
+Your job:
+1. Answer questions about any client's performance, budgets, or targets
+2. Compare metrics across clients when relevant
+3. Use Amazon Profile IDs above to query data via MCP tools
+4. Always specify which client/market you're referencing
+5. Be concise. Use markdown tables for comparisons.`;
+
+      const globalResponse = await (anthropic.messages.create as Function)({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 4096,
+        system: globalPrompt,
+        messages: messages.map((m: { role: string; content: string }) => ({
+          role: m.role,
+          content: m.content,
+        })),
+        mcp_servers: [{ type: 'url' as const, url: MCP_SERVER_URL, name: 'amazon-ads' }],
+      });
+
+      let globalText = '';
+      for (const block of globalResponse.content) {
+        if (block.type === 'text') globalText += block.text;
+      }
+
+      return res.status(200).json({
+        content: globalText,
+        toolCalls: [],
+        proposals: [],
+        stopReason: globalResponse.stop_reason,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      console.error('[chat/global]', message);
+      return res.status(500).json({ error: message });
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
+  if (!conversationId || !clientId) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
