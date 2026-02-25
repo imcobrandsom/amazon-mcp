@@ -17,5 +17,5 @@
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
-  ],
+  ]
 }
