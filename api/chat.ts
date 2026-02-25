@@ -141,21 +141,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const supabase = createAdminClient();
     const accessToken = await getAmazonAccessToken();
-    const clientId_amazon = process.env.AMAZON_CLIENT_ID!;
 
     // Build the MCP server config for Claude
-    const mcpServers: Anthropic.Messages.MessageCreateParamsNonStreaming['mcp_servers'] =
-      [
-        {
-          type: 'url' as const,
-          url: MCP_SERVER_URL,
-          name: 'amazon-ads',
-          headers: {
-            'Amazon-Advertising-API-ClientId': clientId_amazon,
-            Authorization: `Bearer ${accessToken}`,
-          },
-        },
-      ];
+    const mcpServers = [
+      {
+        type: 'url' as const,
+        url: MCP_SERVER_URL,
+        name: 'amazon-ads',
+        authorization_token: accessToken,
+      },
+    ];
 
     const systemPrompt = buildSystemPrompt(
       clientContext,
