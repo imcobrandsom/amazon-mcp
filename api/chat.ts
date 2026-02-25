@@ -3,7 +3,10 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createAdminClient } from './_lib/supabase-admin.js';
 import { getAmazonAccessToken } from './_lib/amazon-token.js';
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  defaultHeaders: { 'anthropic-beta': 'mcp-client-2025-04-04' },
+});
 
 const MCP_SERVER_URL = 'https://advertising-ai-eu.amazon.com/mcp';
 
