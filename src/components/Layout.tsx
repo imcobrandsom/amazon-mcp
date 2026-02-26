@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutGrid, LogOut, ChevronRight, Settings } from 'lucide-react';
+import { LayoutGrid, LogOut, ChevronRight, Settings, ChevronDown, ShoppingCart } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import clsx from 'clsx';
 
@@ -8,9 +8,39 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
+interface BolNavCustomer {
+  id: string;
+  seller_name: string;
+  client_id: string | null;
+}
+
 export default function Layout({ children }: LayoutProps) {
   const { user, signOut } = useAuth();
   const location = useLocation();
+
+  const [bolCustomers, setBolCustomers] = useState<BolNavCustomer[]>([]);
+  const [bolOpen, setBolOpen] = useState(() =>
+    location.pathname.includes('/bol')
+  );
+
+  // Fetch bol customers once on mount
+  useEffect(() => {
+    fetch('/api/bol-customers')
+      .then(r => r.ok ? r.json() : { customers: [] })
+      .then((data: { customers?: BolNavCustomer[] }) => {
+        setBolCustomers(
+          (data.customers ?? []).filter(c => c.client_id)
+        );
+      })
+      .catch(() => {});
+  }, []);
+
+  // Auto-expand when navigating to a bol page
+  useEffect(() => {
+    if (location.pathname.includes('/bol')) setBolOpen(true);
+  }, [location.pathname]);
+
+  const isBolActive = location.pathname.includes('/bol');
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
@@ -34,7 +64,7 @@ export default function Layout({ children }: LayoutProps) {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 px-3 py-4 space-y-0.5">
+        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
           <Link
             to="/"
             className={clsx(
@@ -47,6 +77,49 @@ export default function Layout({ children }: LayoutProps) {
             <LayoutGrid size={15} />
             Clients
           </Link>
+
+          {/* Bol.com section */}
+          {bolCustomers.length > 0 && (
+            <div>
+              <button
+                onClick={() => setBolOpen(o => !o)}
+                className={clsx(
+                  'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors w-full',
+                  isBolActive
+                    ? 'text-orange-300'
+                    : 'text-navy-200 hover:bg-navy-800 hover:text-white'
+                )}
+              >
+                <div className="w-3.5 h-3.5 bg-orange-500 rounded-sm flex-shrink-0" />
+                <span className="flex-1 text-left">Bol.com</span>
+                <ChevronDown
+                  size={12}
+                  className={clsx('transition-transform duration-150', bolOpen && 'rotate-180')}
+                />
+              </button>
+
+              {bolOpen && (
+                <div className="mt-0.5 ml-2 space-y-0.5">
+                  {bolCustomers.map(c => (
+                    <Link
+                      key={c.id}
+                      to={`/clients/${c.client_id}/bol`}
+                      className={clsx(
+                        'flex items-center gap-2 pl-5 pr-3 py-1.5 rounded-md text-xs transition-colors',
+                        location.pathname === `/clients/${c.client_id}/bol`
+                          ? 'bg-orange-500/20 text-orange-300 font-medium'
+                          : 'text-navy-300 hover:bg-navy-800 hover:text-white'
+                      )}
+                    >
+                      <ShoppingCart size={11} className="flex-shrink-0 opacity-60" />
+                      {c.seller_name}
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <Link
             to="/settings"
             className={clsx(
