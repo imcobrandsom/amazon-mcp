@@ -4,13 +4,17 @@
  */
 
 const BOL_API_BASE  = 'https://api.bol.com';
+const BOL_ADS_BASE  = 'https://advertising.bol.com';
 const BOL_TOKEN_URL = 'https://login.bol.com/token?grant_type=client_credentials';
 const BOL_HEADERS   = { 'Accept': 'application/vnd.retailer.v10+json', 'Content-Type': 'application/json' };
+const BOL_ADS_HEADERS = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
 
 // ── Per-customer token cache (module-level, ~15 min lifetime per Vercel instance) ──────
 interface CachedToken { token: string; expiresAt: number }
-const tokenCache = new Map<string, CachedToken>();
+const tokenCache    = new Map<string, CachedToken>(); // Retailer API
+const adsTokenCache = new Map<string, CachedToken>(); // Advertising API
 
+/** Fetch/cache a Retailer API OAuth2 token */
 export async function getBolToken(clientId: string, clientSecret: string): Promise<string> {
   const cached = tokenCache.get(clientId);
   if (cached && Date.now() < cached.expiresAt) return cached.token;
@@ -28,6 +32,30 @@ export async function getBolToken(clientId: string, clientSecret: string): Promi
 
   const data = await res.json() as { access_token: string; expires_in: number };
   tokenCache.set(clientId, {
+    token: data.access_token,
+    expiresAt: Date.now() + (data.expires_in - 60) * 1000,
+  });
+  return data.access_token;
+}
+
+/** Fetch/cache an Advertising API OAuth2 token (separate credentials) */
+export async function getAdsToken(adsClientId: string, adsClientSecret: string): Promise<string> {
+  const cached = adsTokenCache.get(adsClientId);
+  if (cached && Date.now() < cached.expiresAt) return cached.token;
+
+  const credentials = Buffer.from(`${adsClientId}:${adsClientSecret}`).toString('base64');
+  const res = await fetch(BOL_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Bol.com Ads OAuth failed (${res.status}): ${body}`);
+  }
+
+  const data = await res.json() as { access_token: string; expires_in: number };
+  adsTokenCache.set(adsClientId, {
     token: data.access_token,
     expiresAt: Date.now() + (data.expires_in - 60) * 1000,
   });
@@ -179,4 +207,53 @@ export async function getOfferInsights(token: string, offerIds: string[]): Promi
   if (!res.ok) return [];
   const d = res.data as { offerInsights?: unknown[] };
   return d.offerInsights ?? [];
+}
+
+// ── Advertising API helpers ───────────────────────────────────────────────────
+
+async function adsFetch(
+  token: string,
+  path: string,
+  options: RequestInit = {}
+): Promise<{ ok: boolean; status: number; data: unknown }> {
+  const res = await fetch(`${BOL_ADS_BASE}${path}`, {
+    ...options,
+    headers: { ...BOL_ADS_HEADERS, 'Authorization': `Bearer ${token}`, ...(options.headers ?? {}) },
+  });
+
+  let data: unknown;
+  const ct = res.headers.get('content-type') ?? '';
+  if (ct.includes('json')) data = await res.json();
+  else data = await res.text();
+
+  return { ok: res.ok, status: res.status, data };
+}
+
+/** Fetch all ad campaigns */
+export async function getAdsCampaigns(adsToken: string): Promise<unknown[]> {
+  const res = await adsFetch(adsToken, '/api/v1/campaigns');
+  if (!res.ok) throw new Error(`getAdsCampaigns failed (${res.status}): ${JSON.stringify(res.data)}`);
+  const d = res.data as { campaigns?: unknown[] };
+  return d.campaigns ?? [];
+}
+
+/** Fetch ad groups for a campaign */
+export async function getAdsAdGroups(adsToken: string, campaignId: string): Promise<unknown[]> {
+  const res = await adsFetch(adsToken, `/api/v1/campaigns/${campaignId}/ad-groups`);
+  if (!res.ok) return [];
+  const d = res.data as { adGroups?: unknown[] };
+  return d.adGroups ?? [];
+}
+
+/** Fetch performance report for a date range (ISO dates: yyyy-MM-dd) */
+export async function getAdsPerformance(
+  adsToken: string,
+  dateFrom: string,
+  dateTo: string
+): Promise<unknown[]> {
+  const params = new URLSearchParams({ dateFrom, dateTo, groupBy: 'CAMPAIGN' });
+  const res = await adsFetch(adsToken, `/api/v1/sponsored-products/performance-report?${params}`);
+  if (!res.ok) return [];
+  const d = res.data as { performanceReport?: unknown[] };
+  return d.performanceReport ?? [];
 }

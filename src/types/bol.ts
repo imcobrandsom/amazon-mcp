@@ -5,6 +5,7 @@ export interface BolCustomer {
   client_id: string | null;   // FK to clients.id — null = not linked yet
   seller_name: string;
   bol_client_id: string;
+  ads_client_id: string | null;  // Advertising API client ID (secret never exposed)
   active: boolean;
   sync_interval_hours: number;
   last_sync_at: string | null;
