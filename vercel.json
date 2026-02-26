@@ -13,14 +13,5 @@
       "destination": "/index.html"
     }
   ],
-  "crons": [
-    {
-      "path": "/api/bol-sync-start",
-      "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/bol-sync-complete",
-      "schedule": "*/5 * * * *"
-    }
-  ]
+  "_crons_disabled": "moved to GitHub Actions — see .github/workflows/bol-sync.yml"
 }

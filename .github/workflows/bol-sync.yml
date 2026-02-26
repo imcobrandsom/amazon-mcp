@@ -1,0 +1,46 @@
+name: Bol.com Sync
+
+on:
+  # Cron 1: daily sync start at 02:00 UTC
+  schedule:
+    - cron: '0 2 * * *'
+  # Allow manual trigger from GitHub Actions UI
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Which job to run'
+        required: true
+        default: 'start'
+        type: choice
+        options:
+          - start
+          - complete
+
+jobs:
+  # ── Daily sync start (02:00 UTC) ──────────────────────────────────────────
+  bol-sync-start:
+    name: Bol Sync Start
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'start')
+    steps:
+      - name: Trigger sync start
+        run: |
+          curl -s -f -X POST "${{ secrets.VERCEL_APP_URL }}/api/bol-sync-start" \
+            -H "Authorization: Bearer ${{ secrets.BOL_CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --max-time 55
+
+  # ── Poll for completed export jobs (runs 5 min after start via workflow_dispatch) ─
+  # For automatic polling use cron-job.org (free) pointed at /api/bol-sync-complete
+  # with x-webhook-secret header — GitHub Actions minimum schedule is 5 min anyway
+  bol-sync-complete:
+    name: Bol Sync Complete
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'complete'
+    steps:
+      - name: Trigger sync complete
+        run: |
+          curl -s -f -X POST "${{ secrets.VERCEL_APP_URL }}/api/bol-sync-complete" \
+            -H "Authorization: Bearer ${{ secrets.BOL_CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --max-time 55
