@@ -4,10 +4,10 @@
  */
 
 const BOL_API_BASE  = 'https://api.bol.com';
-const BOL_ADS_BASE  = 'https://advertising.bol.com';
 const BOL_TOKEN_URL = 'https://login.bol.com/token?grant_type=client_credentials';
 const BOL_HEADERS   = { 'Accept': 'application/vnd.retailer.v10+json', 'Content-Type': 'application/vnd.retailer.v10+json' };
-const BOL_ADS_HEADERS = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
+// Advertiser API uses the same base URL but different Accept header (v11)
+const BOL_ADS_HEADERS = { 'Accept': 'application/vnd.advertiser.v11+json', 'Content-Type': 'application/vnd.advertiser.v11+json' };
 
 // ── Per-customer token cache (module-level, ~15 min lifetime per Vercel instance) ──────
 interface CachedToken { token: string; expiresAt: number }
@@ -131,8 +131,24 @@ async function bolFetch(
   });
 
   if (res.status === 429) {
-    const retryAfter = parseInt(res.headers.get('Retry-After') ?? '60', 10);
-    throw new Error(`Rate limited by bol.com — retry after ${retryAfter}s`);
+    const retryAfter = parseInt(res.headers.get('Retry-After') ?? '30', 10);
+    // Cap wait at 25 s to stay within Vercel function timeout, then retry once
+    const waitMs = Math.min(retryAfter, 25) * 1000;
+    console.warn(`[bolFetch] 429 on ${path} — waiting ${waitMs / 1000}s then retrying once`);
+    await sleep(waitMs);
+    const retry = await fetch(`${BOL_API_BASE}${path}`, {
+      ...options,
+      headers: { ...BOL_HEADERS, 'Authorization': `Bearer ${token}`, ...(options.headers ?? {}) },
+    });
+    if (retry.status === 429) {
+      const retryAfter2 = parseInt(retry.headers.get('Retry-After') ?? '60', 10);
+      throw new Error(`Rate limited by bol.com — retry after ${retryAfter2}s`);
+    }
+    const ct2 = retry.headers.get('content-type') ?? '';
+    let data2: unknown;
+    if (ct2.includes('json')) data2 = await retry.json();
+    else data2 = await retry.text();
+    return { ok: retry.ok, status: retry.status, data: data2 };
   }
 
   let data: unknown;
@@ -362,7 +378,7 @@ async function adsFetch(
   path: string,
   options: RequestInit = {}
 ): Promise<{ ok: boolean; status: number; data: unknown }> {
-  const res = await fetch(`${BOL_ADS_BASE}${path}`, {
+  const res = await fetch(`${BOL_API_BASE}${path}`, {
     ...options,
     headers: { ...BOL_ADS_HEADERS, 'Authorization': `Bearer ${token}`, ...(options.headers ?? {}) },
   });
@@ -375,31 +391,55 @@ async function adsFetch(
   return { ok: res.ok, status: res.status, data };
 }
 
-/** Fetch all ad campaigns */
+/** Fetch all ad campaigns (paginated POST) */
 export async function getAdsCampaigns(adsToken: string): Promise<unknown[]> {
-  const res = await adsFetch(adsToken, '/api/v1/campaigns');
-  if (!res.ok) throw new Error(`getAdsCampaigns failed (${res.status}): ${JSON.stringify(res.data)}`);
-  const d = res.data as { campaigns?: unknown[] };
-  return d.campaigns ?? [];
+  const all: unknown[] = [];
+  let page = 1;
+
+  while (true) {
+    const res = await adsFetch(
+      adsToken,
+      '/advertiser/sponsored-products/campaign-management/campaigns/list',
+      { method: 'POST', body: JSON.stringify({ page, pageSize: 50, filter: {} }) }
+    );
+    if (!res.ok) throw new Error(`getAdsCampaigns failed (${res.status}): ${JSON.stringify(res.data)}`);
+    const d = res.data as { campaigns?: unknown[] };
+    const items = d.campaigns ?? [];
+    all.push(...items);
+    if (items.length < 50) break;
+    page++;
+  }
+
+  return all;
 }
 
-/** Fetch ad groups for a campaign */
+/** Fetch ad groups for a campaign (POST with campaignIds filter) */
 export async function getAdsAdGroups(adsToken: string, campaignId: string): Promise<unknown[]> {
-  const res = await adsFetch(adsToken, `/api/v1/campaigns/${campaignId}/ad-groups`);
+  const res = await adsFetch(
+    adsToken,
+    '/advertiser/sponsored-products/campaign-management/ad-groups/list',
+    { method: 'POST', body: JSON.stringify({ page: 1, pageSize: 50, filter: { campaignIds: [campaignId] } }) }
+  );
   if (!res.ok) return [];
   const d = res.data as { adGroups?: unknown[] };
   return d.adGroups ?? [];
 }
 
-/** Fetch performance report for a date range (ISO dates: yyyy-MM-dd) */
+/** Fetch advertiser-level performance for a date range (ISO dates: yyyy-MM-dd) */
 export async function getAdsPerformance(
   adsToken: string,
   dateFrom: string,
   dateTo: string
 ): Promise<unknown[]> {
-  const params = new URLSearchParams({ dateFrom, dateTo, groupBy: 'CAMPAIGN' });
-  const res = await adsFetch(adsToken, `/api/v1/sponsored-products/performance-report?${params}`);
+  const params = new URLSearchParams({
+    'period-start-date': dateFrom,
+    'period-end-date':   dateTo,
+  });
+  const res = await adsFetch(
+    adsToken,
+    `/advertiser/sponsored-products/reporting/performance/advertiser?${params}`
+  );
   if (!res.ok) return [];
-  const d = res.data as { performanceReport?: unknown[] };
-  return d.performanceReport ?? [];
+  const d = res.data as { total?: unknown; subTotals?: unknown[] };
+  return d.subTotals ?? (d.total ? [d.total] : []);
 }
