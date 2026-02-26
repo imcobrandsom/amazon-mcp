@@ -7,13 +7,18 @@ import {
   DollarSign,
   Layers,
   History,
+  ShoppingCart,
+  Lightbulb,
 } from 'lucide-react';
 import { useClientDetail } from '../hooks/useClientDetail';
 import ChatInterface from '../components/Chat/ChatInterface';
 import ProposalsPanel from '../components/Proposals/ProposalsPanel';
+import BolSection from '../components/Bol/BolSection';
 import type { ClientMarket, OptimizationProposal } from '../types';
 import clsx from 'clsx';
 import { supabase } from '../lib/supabase';
+
+type RightTab = 'proposals' | 'bol';
 
 export default function ClientDetail() {
   const { clientId } = useParams<{ clientId: string }>();
@@ -32,6 +37,7 @@ export default function ClientDetail() {
   } = useClientDetail(clientId!);
 
   const [activeMarketIndex, setActiveMarketIndex] = useState(0);
+  const [rightTab, setRightTab] = useState<RightTab>('proposals');
 
   const activeMarket: ClientMarket | null = markets[activeMarketIndex] ?? null;
 
@@ -163,11 +169,50 @@ export default function ClientDetail() {
               onProposalsCreated={handleProposalsCreated}
               onRefreshMemory={refetchMemory}
             />
-            <ProposalsPanel
-              proposals={proposals}
-              marketId={activeMarket.id}
-              onUpdated={handleProposalUpdated}
-            />
+
+            {/* Right panel — tabbed: Proposals / Bol.com */}
+            <div className="flex flex-col overflow-hidden gap-2">
+              {/* Tab bar */}
+              <div className="flex items-center bg-white border border-slate-200 rounded-lg p-0.5 flex-shrink-0">
+                <button
+                  onClick={() => setRightTab('proposals')}
+                  className={clsx(
+                    'flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded-md transition-colors',
+                    rightTab === 'proposals'
+                      ? 'bg-brand-500 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  )}
+                >
+                  <Lightbulb size={11} />
+                  Proposals
+                </button>
+                <button
+                  onClick={() => setRightTab('bol')}
+                  className={clsx(
+                    'flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium rounded-md transition-colors',
+                    rightTab === 'bol'
+                      ? 'bg-orange-500 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  )}
+                >
+                  <ShoppingCart size={11} />
+                  Bol.com
+                </button>
+              </div>
+
+              {/* Panel content */}
+              <div className="flex-1 overflow-hidden">
+                {rightTab === 'proposals' ? (
+                  <ProposalsPanel
+                    proposals={proposals}
+                    marketId={activeMarket.id}
+                    onUpdated={handleProposalUpdated}
+                  />
+                ) : (
+                  <BolSection clientId={clientId!} />
+                )}
+              </div>
+            </div>
           </div>
         </div>
       ) : null}
