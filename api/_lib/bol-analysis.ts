@@ -96,7 +96,7 @@ export function analyzeContent(offers: Record<string, string>[]): AnalysisResult
 interface InventoryItem {
   stock?: { actualStock?: number };
   title?: string;
-  offer?: { offerId?: string };
+  offer?: { offerId?: string; fulfilmentMethod?: string };
 }
 
 export function analyzeInventory(inventory: unknown[]): AnalysisResult {
@@ -105,47 +105,93 @@ export function analyzeInventory(inventory: unknown[]): AnalysisResult {
   }
 
   const items = inventory as InventoryItem[];
-  const stockLevels = items.map(i => i.stock?.actualStock ?? 0);
-  const outOfStock  = stockLevels.filter(s => s === 0).length;
-  const criticalLow = stockLevels.filter(s => s > 0 && s <= 7).length;   // < 7 days coverage
-  const lowStock    = stockLevels.filter(s => s > 7 && s <= 15).length;
-  const totalItems  = items.length;
 
-  const healthyPct  = (totalItems - outOfStock - criticalLow) / totalItems;
-  const score       = Math.round(healthyPct * 100);
+  // bol.com's /retailer/inventory endpoint only tracks FBB stock.
+  // FBR items always have actualStock = 0 because bol.com doesn't manage their warehouse.
+  // Detect FBR vs FBB via the offer.fulfilmentMethod field, or fall back to
+  // heuristic: if ALL items have zero stock, treat as pure FBR seller.
+  const fbbItems = items.filter(i => i.offer?.fulfilmentMethod === 'FBB');
+  const fbrItems = items.filter(i => i.offer?.fulfilmentMethod === 'FBR');
+  const unknownItems = items.filter(i => !i.offer?.fulfilmentMethod);
+  const allZeroStock = items.every(i => (i.stock?.actualStock ?? 0) === 0);
+
+  // Pure FBR: all items are FBR, or we can't distinguish and all stock is 0
+  const isFbrSeller =
+    (fbrItems.length > 0 && fbbItems.length === 0) ||
+    (unknownItems.length === items.length && allZeroStock);
+
+  if (isFbrSeller) {
+    return {
+      score: 75,
+      findings: {
+        items_count: items.length,
+        fulfilment_model: 'FBR',
+        message: 'FBR seller — stock managed in own warehouse, not tracked by bol.com',
+        fbr_items: items.length,
+        fbb_items: 0,
+      },
+      recommendations: [
+        {
+          priority: 'medium',
+          title: 'Consider FBB for best-sellers',
+          action: 'Migrate high-volume products to Fulfilled by Bol (FBB) for faster delivery and Buy Box advantage.',
+          impact: '15–25% sales lift for FBB products',
+        },
+      ],
+    };
+  }
+
+  // FBB or mixed: score based on FBB stock levels only
+  const scoredItems  = fbbItems.length > 0 ? fbbItems : items; // fallback if no method tag
+  const stockLevels  = scoredItems.map(i => i.stock?.actualStock ?? 0);
+  const outOfStock   = stockLevels.filter(s => s === 0).length;
+  const criticalLow  = stockLevels.filter(s => s > 0 && s <= 7).length;
+  const lowStock     = stockLevels.filter(s => s > 7 && s <= 15).length;
+  const totalScored  = scoredItems.length;
+
+  const healthyPct   = totalScored > 0 ? (totalScored - outOfStock - criticalLow) / totalScored : 1;
+  const score        = Math.round(healthyPct * 100);
 
   const recs: AnalysisResult['recommendations'] = [];
 
   if (outOfStock > 0)
-    recs.push({ priority: 'high', title: `${outOfStock} out-of-stock product(s)`,
-      action: 'Reorder immediately. Out-of-stock products lose Buy Box and visibility.',
+    recs.push({ priority: 'high', title: `${outOfStock} FBB product(s) out of stock`,
+      action: 'Replenish FBB stock immediately. Out-of-stock FBB products lose the Buy Box.',
       impact: 'Prevent lost sales from stockouts' });
 
   if (criticalLow > 0)
-    recs.push({ priority: 'high', title: `${criticalLow} critically low stock (<7 days)`,
-      action: 'Stock replenishment urgent. Place reorder now before stockout.',
+    recs.push({ priority: 'high', title: `${criticalLow} FBB product(s) critically low (<7 days)`,
+      action: 'Place replenishment order now before stockout.',
       impact: 'Prevent imminent revenue loss' });
 
   if (lowStock > 0)
-    recs.push({ priority: 'medium', title: `${lowStock} low stock (7–15 days remaining)`,
+    recs.push({ priority: 'medium', title: `${lowStock} FBB product(s) low stock (7–15 days)`,
       action: 'Plan replenishment within the week.',
       impact: 'Maintain stable inventory coverage' });
 
   const overstock = stockLevels.filter(s => s > 180).length;
   if (overstock > 0)
-    recs.push({ priority: 'low', title: `${overstock} product(s) overstocked (>180 days)`,
+    recs.push({ priority: 'low', title: `${overstock} FBB product(s) overstocked (>180 days)`,
       action: 'Consider promotional pricing to improve cash flow and reduce storage costs.',
       impact: 'Improved capital efficiency' });
+
+  if (fbrItems.length > 0)
+    recs.push({ priority: 'medium', title: 'Consider FBB for best-sellers',
+      action: `You have ${fbrItems.length} FBR product(s). Migrating top sellers to FBB improves delivery speed and Buy Box win rate.`,
+      impact: '15–25% sales lift for converted products' });
 
   return {
     score,
     findings: {
-      items_count: totalItems,
-      out_of_stock: outOfStock,
-      critical_low: criticalLow,
-      low_stock: lowStock,
-      healthy_stock: totalItems - outOfStock - criticalLow - lowStock,
-      avg_stock: Math.round(avg(stockLevels)),
+      items_count: items.length,
+      fulfilment_model: fbrItems.length > 0 && fbbItems.length > 0 ? 'MIXED' : 'FBB',
+      fbr_items: fbrItems.length,
+      fbb_items: fbbItems.length,
+      fbb_out_of_stock: outOfStock,
+      fbb_critical_low: criticalLow,
+      fbb_low_stock: lowStock,
+      fbb_healthy: totalScored - outOfStock - criticalLow - lowStock,
+      avg_fbb_stock: Math.round(avg(stockLevels)),
     },
     recommendations: recs,
   };
