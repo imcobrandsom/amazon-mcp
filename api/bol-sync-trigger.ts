@@ -21,6 +21,9 @@ import {
   getAdsCampaigns,
   getAdsAdGroups,
   getAdsPerformance,
+  getAdsCampaignPerformance,
+  getAdsKeywords,
+  getAdsKeywordPerformance,
   getReturns,
   getPerformanceIndicator,
   checkProcessStatus,
@@ -170,6 +173,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         const adsToken  = await getAdsToken(adsId, adsSecret);
         const campaigns = await getAdsCampaigns(adsToken);
+
+        // Date range: last 30 days
+        const now      = new Date();
+        const dateTo   = now.toISOString().slice(0, 10);
+        const dateFrom = new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10);
+
+        // Ad groups per campaign (max 20)
         const allAdGroups: unknown[] = [];
         for (const campaign of (campaigns as Array<{ campaignId?: string }>).slice(0, 20)) {
           if (campaign.campaignId) {
@@ -177,10 +187,90 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             await sleep(100);
           }
         }
-        const now      = new Date();
-        const dateTo   = now.toISOString().slice(0, 10);
-        const dateFrom = new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10);
-        const perf     = await getAdsPerformance(adsToken, dateFrom, dateTo);
+
+        // Advertiser-level performance (for AI analysis blob)
+        const perf = await getAdsPerformance(adsToken, dateFrom, dateTo);
+
+        // ── Per-campaign performance → bol_campaign_performance ─────────────
+        const campaignIds = (campaigns as Array<{ campaignId?: string }>)
+          .filter(c => c.campaignId).map(c => c.campaignId as string);
+        const campPerfSubTotals = await getAdsCampaignPerformance(adsToken, campaignIds, dateFrom, dateTo);
+        const subTotals = campPerfSubTotals as Array<Record<string, unknown>>;
+
+        const campPerfRows = (campaigns as Array<Record<string, unknown>>).map((camp, i) => {
+          const campaignId = camp.campaignId as string;
+          const p = subTotals.find(s => s.entityId === campaignId)
+                 ?? subTotals.find(s => s.campaignId === campaignId)
+                 ?? subTotals[i]
+                 ?? {};
+          const budget = (camp.dailyBudget as Record<string, unknown> | undefined);
+          return {
+            bol_customer_id: customer.id,
+            campaign_id:     campaignId,
+            campaign_name:   (camp.name as string) ?? null,
+            campaign_type:   (camp.campaignType as string) ?? null,
+            state:           (camp.state as string) ?? null,
+            budget:          budget?.amount ?? null,
+            spend:           p.cost ?? null,
+            impressions:     p.impressions ?? null,
+            clicks:          p.clicks ?? null,
+            ctr_pct:         p.ctr ?? null,
+            avg_cpc:         p.averageCpc ?? null,
+            revenue:         p.sales14d ?? null,
+            roas:            p.roas14d ?? null,
+            acos:            p.acos14d ?? null,
+            conversions:     p.conversions14d ?? null,
+            cvr_pct:         p.conversionRate14d ?? null,
+          };
+        });
+
+        if (campPerfRows.length > 0) {
+          await supabase.from('bol_campaign_performance').insert(campPerfRows);
+        }
+
+        // ── Keywords + per-keyword performance → bol_keyword_performance ────
+        const allKeywords: Array<Record<string, unknown>> = [];
+        for (const adGroup of (allAdGroups as Array<{ adGroupId?: string }>).slice(0, 40)) {
+          if (adGroup.adGroupId) {
+            const kws = await getAdsKeywords(adsToken, adGroup.adGroupId);
+            allKeywords.push(...(kws as Array<Record<string, unknown>>));
+            await sleep(100);
+          }
+        }
+
+        if (allKeywords.length > 0) {
+          const keywordIds = allKeywords.filter(k => k.keywordId).map(k => k.keywordId as string);
+          const kwSubTotals = (await getAdsKeywordPerformance(adsToken, keywordIds, dateFrom, dateTo)) as Array<Record<string, unknown>>;
+
+          const kwPerfRows = allKeywords.map((kw, i) => {
+            const keywordId = kw.keywordId as string;
+            const p = kwSubTotals.find(s => s.entityId === keywordId)
+                   ?? kwSubTotals.find(s => s.keywordId === keywordId)
+                   ?? kwSubTotals[i]
+                   ?? {};
+            const bid = (kw.bid as Record<string, unknown> | undefined);
+            return {
+              bol_customer_id: customer.id,
+              keyword_id:      keywordId,
+              keyword_text:    (kw.keywordText as string) ?? null,
+              match_type:      (kw.matchType as string) ?? null,
+              campaign_id:     kw.campaignId as string,
+              ad_group_id:     (kw.adGroupId as string) ?? null,
+              bid:             bid?.amount ?? null,
+              state:           (kw.state as string) ?? null,
+              spend:           p.cost ?? null,
+              impressions:     p.impressions ?? null,
+              clicks:          p.clicks ?? null,
+              revenue:         p.sales14d ?? null,
+              acos:            p.acos14d ?? null,
+              conversions:     p.conversions14d ?? null,
+            };
+          });
+
+          await supabase.from('bol_keyword_performance').insert(kwPerfRows);
+        }
+
+        // ── AI analysis blob (unchanged) ─────────────────────────────────────
         const analysis = analyzeAdvertising(campaigns, allAdGroups, perf);
         const { data: snap } = await supabase.from('bol_raw_snapshots').insert({
           bol_customer_id: customer.id,
@@ -197,7 +287,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           findings:        analysis.findings,
           recommendations: analysis.recommendations,
         });
-        report.advertising = { status: 'ok', campaigns: campaigns.length, score: analysis.score };
+        report.advertising = { status: 'ok', campaigns: campaigns.length, keywords: allKeywords.length, score: analysis.score };
       } catch (e) {
         report.advertising = { status: 'failed', error: (e as Error).message };
       }

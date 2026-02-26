@@ -443,3 +443,92 @@ export async function getAdsPerformance(
   const d = res.data as { total?: unknown; subTotals?: unknown[] };
   return d.subTotals ?? (d.total ? [d.total] : []);
 }
+
+/**
+ * Fetch per-campaign performance for a list of campaign IDs (batched, max 100 per call).
+ * Returns subTotals array — each entry corresponds positionally to the campaignIds supplied.
+ * Also attempts entityId matching if the API includes it in the response.
+ */
+export async function getAdsCampaignPerformance(
+  adsToken: string,
+  campaignIds: string[],
+  dateFrom: string,
+  dateTo: string
+): Promise<unknown[]> {
+  if (campaignIds.length === 0) return [];
+  const all: unknown[] = [];
+
+  for (let i = 0; i < campaignIds.length; i += 100) {
+    const batch = campaignIds.slice(i, i + 100);
+    const params = new URLSearchParams({
+      'entity-type':       'CAMPAIGN',
+      'entity-ids':        batch.join(','),
+      'period-start-date': dateFrom,
+      'period-end-date':   dateTo,
+    });
+    const res = await adsFetch(
+      adsToken,
+      `/advertiser/sponsored-products/reporting/performance?${params}`
+    );
+    if (!res.ok) continue;
+    const d = res.data as { subTotals?: unknown[] };
+    all.push(...(d.subTotals ?? []));
+  }
+
+  return all;
+}
+
+/** Fetch all keywords for a single ad group (paginated POST) */
+export async function getAdsKeywords(adsToken: string, adGroupId: string): Promise<unknown[]> {
+  const all: unknown[] = [];
+  let page = 1;
+
+  while (true) {
+    const res = await adsFetch(
+      adsToken,
+      '/advertiser/sponsored-products/campaign-management/keywords/list',
+      { method: 'POST', body: JSON.stringify({ page, pageSize: 50, filter: { adGroupIds: [adGroupId] } }) }
+    );
+    if (!res.ok) break;
+    const d = res.data as { keywords?: unknown[] };
+    const items = d.keywords ?? [];
+    all.push(...items);
+    if (items.length < 50) break;
+    page++;
+  }
+
+  return all;
+}
+
+/**
+ * Fetch per-keyword performance for a list of keyword IDs (batched, max 100 per call).
+ * Returns subTotals in the same order as the keywordIds supplied.
+ */
+export async function getAdsKeywordPerformance(
+  adsToken: string,
+  keywordIds: string[],
+  dateFrom: string,
+  dateTo: string
+): Promise<unknown[]> {
+  if (keywordIds.length === 0) return [];
+  const all: unknown[] = [];
+
+  for (let i = 0; i < keywordIds.length; i += 100) {
+    const batch = keywordIds.slice(i, i + 100);
+    const params = new URLSearchParams({
+      'entity-type':       'KEYWORD',
+      'entity-ids':        batch.join(','),
+      'period-start-date': dateFrom,
+      'period-end-date':   dateTo,
+    });
+    const res = await adsFetch(
+      adsToken,
+      `/advertiser/sponsored-products/reporting/performance?${params}`
+    );
+    if (!res.ok) continue;
+    const d = res.data as { subTotals?: unknown[] };
+    all.push(...(d.subTotals ?? []));
+  }
+
+  return all;
+}
