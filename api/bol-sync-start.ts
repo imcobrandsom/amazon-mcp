@@ -6,16 +6,34 @@
  *  1. Submits an async offers-export job  → stores processStatusId in bol_sync_jobs
  *  2. Fetches inventory synchronously     → stores snapshot + runs analysis
  *  3. Fetches orders synchronously        → stores snapshot + runs analysis
+ *  4. Fetches ad campaigns (if ads creds) → stores advertising analysis
+ *  5. Fetches returns                     → stores returns analysis
+ *  6. Fetches performance indicators      → stores performance analysis
  *
  * The offers export is picked up later by bol-sync-complete (runs every 5 min).
- *
- * Auth: Vercel injects  Authorization: Bearer <CRON_SECRET>  for scheduled calls.
- *       For manual calls supply  x-webhook-secret: <BOL_WEBHOOK_SECRET>.
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createAdminClient }  from './_lib/supabase-admin.js';
-import { getBolToken, startOffersExport, getInventory, getOrders } from './_lib/bol-api-client.js';
-import { analyzeInventory, analyzeOrders } from './_lib/bol-analysis.js';
+import {
+  getBolToken,
+  getAdsToken,
+  startOffersExport,
+  getInventory,
+  getOrders,
+  getAdsCampaigns,
+  getAdsAdGroups,
+  getAdsPerformance,
+  getReturns,
+  getPerformanceIndicator,
+  sleep,
+} from './_lib/bol-api-client.js';
+import {
+  analyzeInventory,
+  analyzeOrders,
+  analyzeAdvertising,
+  analyzeReturns,
+  analyzePerformance,
+} from './_lib/bol-analysis.js';
 
 function isAuthorised(req: VercelRequest): boolean {
   const cronSecret    = process.env.CRON_SECRET;
@@ -40,10 +58,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const startedAt = Date.now();
   const results: Array<{ customerId: string; sellerName: string; status: string; detail: string }> = [];
 
-  // Load all active customers
+  // Load all active customers (including ads credentials)
   const { data: customers, error: customersErr } = await supabase
     .from('bol_customers')
-    .select('id, seller_name, bol_client_id, bol_client_secret')
+    .select('id, seller_name, bol_client_id, bol_client_secret, ads_client_id, ads_client_secret')
     .eq('active', true);
 
   if (customersErr) return res.status(500).json({ error: customersErr.message });
@@ -51,6 +69,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   for (const customer of customers) {
     const ctx = { customerId: customer.id as string, sellerName: customer.seller_name as string };
+    const detail: Record<string, string> = {};
+
     try {
       const token = await getBolToken(
         customer.bol_client_id as string,
@@ -58,7 +78,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
 
       // ── 1. Submit async offers export ──────────────────────────────────────
-      let offersJobStatus = 'skipped';
       try {
         const processStatusId = await startOffersExport(token);
         await supabase.from('bol_sync_jobs').insert({
@@ -67,13 +86,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           process_status_id: processStatusId,
           status:            'pending',
         });
-        offersJobStatus = `job submitted (processStatusId: ${processStatusId})`;
+        detail.offers = `job submitted (${processStatusId})`;
       } catch (e) {
-        offersJobStatus = `FAILED: ${(e as Error).message}`;
+        detail.offers = `FAILED: ${(e as Error).message}`;
       }
 
       // ── 2. Fetch inventory ─────────────────────────────────────────────────
-      let inventoryStatus = 'skipped';
       try {
         const inventory = await getInventory(token);
         const analysis  = analyzeInventory(inventory);
@@ -95,13 +113,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           recommendations: analysis.recommendations,
         });
 
-        inventoryStatus = `${inventory.length} items, score ${analysis.score}`;
+        detail.inventory = `${inventory.length} items, score ${analysis.score}`;
       } catch (e) {
-        inventoryStatus = `FAILED: ${(e as Error).message}`;
+        detail.inventory = `FAILED: ${(e as Error).message}`;
       }
 
       // ── 3. Fetch orders ────────────────────────────────────────────────────
-      let ordersStatus = 'skipped';
       try {
         const orders   = await getOrders(token);
         const analysis = analyzeOrders(orders);
@@ -117,21 +134,121 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         await supabase.from('bol_analyses').insert({
           bol_customer_id: customer.id,
           snapshot_id:     snap?.id ?? null,
-          category:        'orders',   // stored as 'orders' category in analyses
+          category:        'orders',
           score:           analysis.score,
           findings:        analysis.findings,
           recommendations: analysis.recommendations,
         });
 
-        ordersStatus = `${orders.length} orders, score ${analysis.score}`;
+        detail.orders = `${orders.length} orders, score ${analysis.score}`;
       } catch (e) {
-        ordersStatus = `FAILED: ${(e as Error).message}`;
+        detail.orders = `FAILED: ${(e as Error).message}`;
+      }
+
+      // ── 4. Advertising (if ads credentials exist) ──────────────────────────
+      const adsClientId     = customer.ads_client_id as string | null;
+      const adsClientSecret = customer.ads_client_secret as string | null;
+
+      if (adsClientId && adsClientSecret) {
+        try {
+          const adsToken  = await getAdsToken(adsClientId, adsClientSecret);
+          const campaigns = await getAdsCampaigns(adsToken);
+
+          // Fetch ad groups per campaign (max first 20 campaigns to avoid timeout)
+          const allAdGroups: unknown[] = [];
+          for (const campaign of (campaigns as Array<{ campaignId?: string }>).slice(0, 20)) {
+            if (campaign.campaignId) {
+              const groups = await getAdsAdGroups(adsToken, campaign.campaignId);
+              allAdGroups.push(...groups);
+              await sleep(100);
+            }
+          }
+
+          // Performance report for last 30 days
+          const now      = new Date();
+          const dateTo   = now.toISOString().slice(0, 10);
+          const dateFrom = new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10);
+          const perf     = await getAdsPerformance(adsToken, dateFrom, dateTo);
+
+          const analysis = analyzeAdvertising(campaigns, allAdGroups, perf);
+
+          const { data: snap } = await supabase.from('bol_raw_snapshots').insert({
+            bol_customer_id: customer.id,
+            data_type:       'advertising',
+            raw_data:        { campaigns, adGroups: allAdGroups, performance: perf },
+            record_count:    campaigns.length,
+            quality_score:   1.0,
+          }).select('id').single();
+
+          await supabase.from('bol_analyses').insert({
+            bol_customer_id: customer.id,
+            snapshot_id:     snap?.id ?? null,
+            category:        'advertising',
+            score:           analysis.score,
+            findings:        analysis.findings,
+            recommendations: analysis.recommendations,
+          });
+
+          detail.advertising = `${campaigns.length} campaigns, score ${analysis.score}`;
+        } catch (e) {
+          detail.advertising = `FAILED: ${(e as Error).message}`;
+        }
+      } else {
+        detail.advertising = 'skipped (no ads credentials)';
+      }
+
+      // ── 5. Returns ────────────────────────────────────────────────────────
+      try {
+        const [openRets, handledRets] = await Promise.all([
+          getReturns(token, false),
+          getReturns(token, true),
+        ]);
+        const analysis = analyzeReturns(openRets, handledRets);
+
+        await supabase.from('bol_analyses').insert({
+          bol_customer_id: customer.id,
+          snapshot_id:     null,
+          category:        'returns',
+          score:           analysis.score,
+          findings:        analysis.findings,
+          recommendations: analysis.recommendations,
+        });
+
+        detail.returns = `${openRets.length} open, ${handledRets.length} handled, score ${analysis.score}`;
+      } catch (e) {
+        detail.returns = `FAILED: ${(e as Error).message}`;
+      }
+
+      // ── 6. Seller performance indicators ──────────────────────────────────
+      try {
+        const indicatorNames = ['CANCELLATION_RATE', 'FULFILMENT_RATE', 'REVIEW_SCORE'] as const;
+        const rawIndicators = await Promise.all(
+          indicatorNames.map(name => getPerformanceIndicator(token, name))
+        );
+        const indicators = rawIndicators.filter(Boolean) as NonNullable<typeof rawIndicators[0]>[];
+
+        if (indicators.length > 0) {
+          const analysis = analyzePerformance(indicators);
+          await supabase.from('bol_analyses').insert({
+            bol_customer_id: customer.id,
+            snapshot_id:     null,
+            category:        'performance',
+            score:           analysis.score,
+            findings:        analysis.findings,
+            recommendations: analysis.recommendations,
+          });
+          detail.performance = `${indicators.length} indicators, score ${analysis.score}`;
+        } else {
+          detail.performance = 'no indicators returned';
+        }
+      } catch (e) {
+        detail.performance = `FAILED: ${(e as Error).message}`;
       }
 
       // Update last_sync_at
       await supabase.from('bol_customers').update({ last_sync_at: new Date().toISOString() }).eq('id', customer.id);
 
-      results.push({ ...ctx, status: 'ok', detail: `offers: ${offersJobStatus} | inventory: ${inventoryStatus} | orders: ${ordersStatus}` });
+      results.push({ ...ctx, status: 'ok', detail: JSON.stringify(detail) });
     } catch (err) {
       results.push({ ...ctx, status: 'error', detail: (err as Error).message });
     }

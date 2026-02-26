@@ -12,5 +12,19 @@
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/bol-sync-start",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/bol-sync-complete",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/bol-sync-extended",
+      "schedule": "0 */6 * * *"
+    }
   ]
 }

@@ -14,6 +14,11 @@ interface CachedToken { token: string; expiresAt: number }
 const tokenCache    = new Map<string, CachedToken>(); // Retailer API
 const adsTokenCache = new Map<string, CachedToken>(); // Advertising API
 
+/** Sleep helper for rate-limit spacing */
+export function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 /** Fetch/cache a Retailer API OAuth2 token */
 export async function getBolToken(clientId: string, clientSecret: string): Promise<string> {
   const cached = tokenCache.get(clientId);
@@ -176,13 +181,13 @@ export async function getInventory(token: string): Promise<unknown[]> {
   return all;
 }
 
-/** Fetch recent orders (synchronous, last 30 days) */
+/** Fetch recent orders (synchronous, all fulfilment methods) — Bug fix: was FBR only */
 export async function getOrders(token: string): Promise<unknown[]> {
   const all: unknown[] = [];
   let page = 1;
 
   while (true) {
-    const res = await bolFetch(token, `/retailer/orders?fulfilment-method=FBR&status=ALL&page=${page}`);
+    const res = await bolFetch(token, `/retailer/orders?fulfilment-method=ALL&status=ALL&page=${page}`);
     if (!res.ok) break;
     const d = res.data as { orders?: unknown[] };
     const items = d.orders ?? [];
@@ -195,18 +200,139 @@ export async function getOrders(token: string): Promise<unknown[]> {
   return all;
 }
 
-/** Fetch offer performance insights for a list of offer IDs */
+/** Fetch offer performance insights for a list of offer IDs (includes Buy Box %, Visits) */
 export async function getOfferInsights(token: string, offerIds: string[]): Promise<unknown[]> {
   if (offerIds.length === 0) return [];
   const ids = offerIds.slice(0, 20); // API max
   const params = ids.map(id => `offer-id=${encodeURIComponent(id)}`).join('&');
   const res = await bolFetch(
     token,
-    `/retailer/insights/offer?${params}&period=MONTH&number-of-periods=1&name=IMPRESSIONS&name=CLICKS&name=CONVERSIONS`
+    `/retailer/insights/offer?${params}&period=MONTH&number-of-periods=1&name=IMPRESSIONS&name=CLICKS&name=CONVERSIONS&name=BUY_BOX_PERCENTAGE&name=PRODUCT_VISITS`
   );
   if (!res.ok) return [];
   const d = res.data as { offerInsights?: unknown[] };
   return d.offerInsights ?? [];
+}
+
+// ── Returns ───────────────────────────────────────────────────────────────────
+
+/** Fetch returns (open or handled, paginated) */
+export async function getReturns(token: string, handled: boolean): Promise<unknown[]> {
+  const all: unknown[] = [];
+  let page = 1;
+
+  while (true) {
+    const res = await bolFetch(
+      token,
+      `/retailer/returns?fulfilment-method=ALL&handled=${handled}&page=${page}`
+    );
+    if (!res.ok) break;
+    const d = res.data as { returns?: unknown[] };
+    const items = d.returns ?? [];
+    if (items.length === 0) break;
+    all.push(...items);
+    if (items.length < 50) break;
+    page++;
+  }
+
+  return all;
+}
+
+// ── Performance indicators ────────────────────────────────────────────────────
+
+/** Fetch a single official seller performance indicator for the current week */
+export async function getPerformanceIndicator(
+  token: string,
+  name: 'CANCELLATION_RATE' | 'FULFILMENT_RATE' | 'REVIEW_SCORE'
+): Promise<{ name: string; score: number | null; norm: number | null; status: string } | null> {
+  // Use current ISO week — bol.com expects ?week=W&year=Y
+  const now = new Date();
+  // Calculate ISO week number
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  const year = d.getUTCFullYear();
+
+  const res = await bolFetch(
+    token,
+    `/retailer/insights/performance/indicator?name=${name}&week=${weekNo}&year=${year}`
+  );
+  if (!res.ok) return null;
+  const d2 = res.data as { name?: string; score?: number; norm?: number; status?: string };
+  return {
+    name: d2.name ?? name,
+    score: d2.score ?? null,
+    norm: d2.norm ?? null,
+    status: d2.status ?? 'UNKNOWN',
+  };
+}
+
+// ── Competitor data ───────────────────────────────────────────────────────────
+
+/** Fetch all competing offers for a given EAN */
+export async function getCompetingOffers(token: string, ean: string): Promise<unknown[]> {
+  const res = await bolFetch(
+    token,
+    `/retailer/products/${encodeURIComponent(ean)}/offers?include-refurbished-conditions=false`
+  );
+  if (!res.ok) return [];
+  const d = res.data as { offers?: unknown[] };
+  return d.offers ?? [];
+}
+
+/** Fetch product ratings (star rating + count) for a given EAN */
+export async function getProductRatings(
+  token: string,
+  ean: string
+): Promise<{ score: number; count: number } | null> {
+  const res = await bolFetch(token, `/retailer/products/${encodeURIComponent(ean)}/ratings`);
+  if (!res.ok) return null;
+  const d = res.data as { rating?: number; totalRatingCount?: number };
+  if (!d.rating) return null;
+  return { score: d.rating, count: d.totalRatingCount ?? 0 };
+}
+
+// ── Keyword / ranking data ────────────────────────────────────────────────────
+
+/** Fetch product search/browse rank history for a given EAN */
+export async function getProductRanks(
+  token: string,
+  ean: string,
+  searchType: 'SEARCH' | 'BROWSE'
+): Promise<Array<{ rank: number; impressions: number; weekStartDate: string }>> {
+  const res = await bolFetch(
+    token,
+    `/retailer/insights/product-ranks?ean=${encodeURIComponent(ean)}&search-type=${searchType}&number-of-weeks=4`
+  );
+  if (!res.ok) return [];
+  const d = res.data as { productRanks?: Array<{ rank: number; impressions: number; weekStartDate: string }> };
+  return d.productRanks ?? [];
+}
+
+// ── Catalog / content ─────────────────────────────────────────────────────────
+
+/** Fetch full published catalog product data for a given EAN */
+export async function getCatalogProduct(token: string, ean: string): Promise<unknown | null> {
+  const res = await bolFetch(token, `/retailer/content/catalog-products/${encodeURIComponent(ean)}`);
+  if (!res.ok) return null;
+  return res.data;
+}
+
+/** Fetch sales forecast for an offer (predicted weekly sales volume) */
+export async function getSalesForecast(
+  token: string,
+  offerId: string,
+  weeksAhead = 4
+): Promise<Array<{ week: string; amount: number }>> {
+  const res = await bolFetch(
+    token,
+    `/retailer/insights/sales-forecast?offer-id=${encodeURIComponent(offerId)}&weeks-ahead=${weeksAhead}`
+  );
+  if (!res.ok) return [];
+  const d = res.data as { weeklyForecast?: Array<{ week: string; amount: number }> };
+  return d.weeklyForecast ?? [];
 }
 
 // ── Advertising API helpers ───────────────────────────────────────────────────

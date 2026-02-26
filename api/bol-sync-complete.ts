@@ -5,18 +5,23 @@
  * Picks up all pending bol_sync_jobs and checks whether bol.com has finished
  * the async export. When a job is SUCCESS:
  *  - Downloads the CSV
+ *  - Fetches offer insights (Buy Box %, Visits, Impressions, Clicks, Conversions)
  *  - Stores raw snapshot
- *  - Runs content analysis
+ *  - Runs content analysis (with insights enrichment)
  *  - Marks job as completed
  *
  * Jobs that fail or exceed 24 hours are marked as failed.
- *
- * Auth: same as bol-sync-start (CRON_SECRET or x-webhook-secret).
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createAdminClient }    from './_lib/supabase-admin.js';
-import { getBolToken, checkProcessStatus, downloadOffersExport } from './_lib/bol-api-client.js';
-import { analyzeContent } from './_lib/bol-analysis.js';
+import {
+  getBolToken,
+  checkProcessStatus,
+  downloadOffersExport,
+  getOfferInsights,
+  sleep,
+} from './_lib/bol-api-client.js';
+import { analyzeContent, type OfferInsightsMap } from './_lib/bol-analysis.js';
 
 const MAX_JOB_AGE_HOURS = 24;
 const MAX_ATTEMPTS      = 50; // 50 × 5 min = ~4 hours of polling
@@ -106,8 +111,61 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (status === 'SUCCESS' && entityId) {
         // ── Download + process ──────────────────────────────────────────────
-        const offers   = await downloadOffersExport(token, entityId);
-        const analysis = analyzeContent(offers);
+        const offers = await downloadOffersExport(token, entityId);
+
+        // ── Fetch offer insights (in batches of 20, with sleep) ─────────────
+        const insightsMap: OfferInsightsMap = {};
+        const offerIds = offers
+          .map(o => o['Offer Id'] ?? o['offer_id'] ?? '')
+          .filter(Boolean);
+
+        const BATCH = 20;
+        for (let i = 0; i < offerIds.length; i += BATCH) {
+          const batch   = offerIds.slice(i, i + BATCH);
+          const rawList = await getOfferInsights(token, batch);
+
+          for (const raw of rawList as Array<{
+            offerId?: string;
+            name?: string;
+            periods?: Array<{ values?: Array<{ value?: number }> }>;
+          }[]>) {
+            // Each element in rawList is per offer; the API groups by offerId
+            const insights = raw as unknown as {
+              offerId: string;
+              offerInsightData: Array<{ name: string; periods: Array<{ value: number }> }>;
+            };
+            if (!insights.offerId) continue;
+
+            const getVal = (name: string): number => {
+              const entry = insights.offerInsightData?.find((d: { name: string }) => d.name === name);
+              return entry?.periods?.[0]?.value ?? 0;
+            };
+
+            insightsMap[insights.offerId] = {
+              buyBoxPct:   getVal('BUY_BOX_PERCENTAGE') || null,
+              visits:      getVal('PRODUCT_VISITS'),
+              impressions: getVal('IMPRESSIONS'),
+              clicks:      getVal('CLICKS'),
+              conversions: getVal('CONVERSIONS'),
+            } as OfferInsightsMap[string];
+          }
+
+          if (i + BATCH < offerIds.length) await sleep(200);
+        }
+
+        // Store offer insights snapshot (for history / extended cron)
+        if (Object.keys(insightsMap).length > 0) {
+          await supabase.from('bol_raw_snapshots').insert({
+            bol_customer_id: customer.id,
+            data_type:       'offer_insights',
+            raw_data:        { insights: insightsMap },
+            record_count:    Object.keys(insightsMap).length,
+            quality_score:   1.0,
+          });
+        }
+
+        // Run content analysis enriched with insights
+        const analysis = analyzeContent(offers, insightsMap);
 
         const { data: snap } = await supabase.from('bol_raw_snapshots').insert({
           bol_customer_id: customer.id,
@@ -132,7 +190,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           completed_at: new Date().toISOString(),
         }).eq('id', jobId);
 
-        results.push({ jobId, status: 'completed', detail: `${offers.length} offers, content score ${analysis.score}` });
+        results.push({
+          jobId,
+          status: 'completed',
+          detail: `${offers.length} offers, content score ${analysis.score}, ${Object.keys(insightsMap).length} insights`,
+        });
 
       } else if (status === 'FAILURE') {
         await supabase.from('bol_sync_jobs').update({
@@ -159,10 +221,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   console.log(`[bol-sync-complete] checked ${pendingJobs.length} jobs: ${completed} completed, ${pending} still pending — ${Date.now() - startedAt}ms`);
 
   return res.status(200).json({
-    checked:     pendingJobs.length,
+    checked:       pendingJobs.length,
     completed,
     still_pending: pending,
-    duration_ms: Date.now() - startedAt,
+    duration_ms:   Date.now() - startedAt,
     results,
   });
 }

@@ -1,6 +1,7 @@
 /**
- * GET /api/bol-analyses?customerId=<uuid>
- * Returns the latest analyses for a given bol customer.
+ * GET /api/bol-competitors?customerId=<uuid>
+ * Returns the latest competitor snapshot per EAN for a given bol customer.
+ * Populated by the bol-sync-extended cron (runs every 6h).
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createAdminClient } from './_lib/supabase-admin.js';
@@ -14,13 +15,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const supabase = createAdminClient();
+
+  // Fetch recent snapshots ordered by fetched_at desc (limit 1000)
   const { data, error } = await supabase
-    .from('bol_analyses')
+    .from('bol_competitor_snapshots')
     .select('*')
     .eq('bol_customer_id', customerId)
-    .order('analyzed_at', { ascending: false })
-    .limit(100); // last 100 analyses (covers ~5 per category × multiple categories)
+    .order('fetched_at', { ascending: false })
+    .limit(1000);
 
   if (error) return res.status(500).json({ error: error.message });
-  return res.status(200).json({ analyses: data ?? [] });
+
+  // Deduplicate: keep latest snapshot per EAN
+  const seenEans = new Set<string>();
+  const latest = (data ?? []).filter(row => {
+    if (seenEans.has(row.ean as string)) return false;
+    seenEans.add(row.ean as string);
+    return true;
+  });
+
+  return res.status(200).json({ competitors: latest, count: latest.length });
 }

@@ -2,7 +2,13 @@
  * Frontend helpers for the bol.com API endpoints.
  * All calls go through /api/* Vercel functions.
  */
-import type { BolCustomer, BolAnalysis, BolCustomerAnalysisSummary } from '../types/bol';
+import type {
+  BolCustomer,
+  BolAnalysis,
+  BolCustomerAnalysisSummary,
+  BolCompetitorSnapshot,
+  BolKeywordRanking,
+} from '../types/bol';
 
 const BASE = '/api';
 
@@ -72,12 +78,58 @@ export async function getBolSummaryForClient(clientId: string): Promise<BolCusto
       .filter(a => a.category === category)
       .sort((a, b) => new Date(b.analyzed_at).getTime() - new Date(a.analyzed_at).getTime())[0] ?? null;
 
-  const content   = latest('content');
-  const inventory = latest('inventory');
-  const orders    = latest('orders');
+  const content     = latest('content');
+  const inventory   = latest('inventory');
+  const orders      = latest('orders');
+  const advertising = latest('advertising');
+  const returns     = latest('returns');
+  const performance = latest('performance');
 
-  const scores = [content?.score, inventory?.score, orders?.score].filter(s => s != null) as number[];
-  const overall = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+  // Weighted overall score (only include categories with data)
+  const scoreInputs: Record<string, number> = {};
+  if (content?.score     !== undefined) scoreInputs.content     = content.score;
+  if (inventory?.score   !== undefined) scoreInputs.inventory   = inventory.score;
+  if (orders?.score      !== undefined) scoreInputs.orders      = orders.score;
+  if (advertising?.score !== undefined) scoreInputs.advertising = advertising.score;
+  if (returns?.score     !== undefined) scoreInputs.returns     = returns.score;
+  if (performance?.score !== undefined) scoreInputs.performance = performance.score;
 
-  return { customer, content, inventory, orders, overall_score: overall, last_sync_at: customer.last_sync_at };
+  const weights: Record<string, number> = {
+    content: 0.30, inventory: 0.25, orders: 0.20,
+    advertising: 0.15, returns: 0.05, performance: 0.05,
+  };
+  let weighted = 0, totalWeight = 0;
+  for (const [key, w] of Object.entries(weights)) {
+    const s = scoreInputs[key];
+    if (s !== undefined) { weighted += s * w; totalWeight += w; }
+  }
+  const overall = totalWeight > 0 ? Math.round(weighted / totalWeight) : null;
+
+  return {
+    customer,
+    content,
+    inventory,
+    orders,
+    advertising,
+    returns,
+    performance,
+    overall_score: overall,
+    last_sync_at: customer.last_sync_at,
+  };
+}
+
+// ── Competitor data ───────────────────────────────────────────────────────────
+
+export async function getBolCompetitorsForClient(
+  customerId: string
+): Promise<{ competitors: BolCompetitorSnapshot[]; count: number }> {
+  return apiFetch(`/bol-competitors?customerId=${customerId}`);
+}
+
+// ── Keyword ranking data ──────────────────────────────────────────────────────
+
+export async function getBolKeywordsForClient(
+  customerId: string
+): Promise<{ rankings: BolKeywordRanking[]; count: number }> {
+  return apiFetch(`/bol-keywords?customerId=${customerId}`);
 }

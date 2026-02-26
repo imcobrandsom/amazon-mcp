@@ -19,7 +19,7 @@ export type BolSyncJobStatus = 'pending' | 'processing' | 'completed' | 'failed'
 export interface BolSyncJob {
   id: string;
   bol_customer_id: string;
-  data_type: 'listings' | 'inventory' | 'orders' | 'offer_insights';
+  data_type: 'listings' | 'inventory' | 'orders' | 'offer_insights' | 'advertising' | 'returns' | 'performance';
   process_status_id: string | null;
   entity_id: string | null;
   status: BolSyncJobStatus;
@@ -40,7 +40,7 @@ export interface BolAnalysis {
   id: string;
   bol_customer_id: string;
   snapshot_id: string | null;
-  category: 'content' | 'inventory' | 'orders' | 'advertising';
+  category: 'content' | 'inventory' | 'orders' | 'advertising' | 'returns' | 'performance';
   score: number;
   findings: Record<string, unknown>;
   recommendations: BolRecommendation[];
@@ -49,10 +49,47 @@ export interface BolAnalysis {
 
 // Convenience: latest analysis per category for one customer
 export interface BolCustomerAnalysisSummary {
-  customer: BolCustomer;
-  content:   BolAnalysis | null;
-  inventory: BolAnalysis | null;
-  orders:    BolAnalysis | null;
+  customer:    BolCustomer;
+  content:     BolAnalysis | null;
+  inventory:   BolAnalysis | null;
+  orders:      BolAnalysis | null;
+  advertising: BolAnalysis | null;
+  returns:     BolAnalysis | null;
+  performance: BolAnalysis | null;
   overall_score: number | null;
   last_sync_at: string | null;
+}
+
+// ── Competitor snapshot ───────────────────────────────────────────────────────
+
+export interface BolCompetitorSnapshot {
+  id: string;
+  bol_customer_id: string;
+  ean: string;
+  offer_id: string | null;
+  our_price: number | null;
+  lowest_competing_price: number | null;
+  buy_box_winner: boolean | null;
+  competitor_count: number | null;
+  competitor_prices: Array<{
+    offerId?: string;
+    sellerId?: string;
+    price?: number | null;
+    condition?: string;
+    isBuyBoxWinner?: boolean;
+  }> | null;
+  rating_score: number | null;
+  rating_count: number | null;
+  fetched_at: string;
+}
+
+// ── Keyword ranking ───────────────────────────────────────────────────────────
+
+export interface BolKeywordRanking {
+  ean: string;
+  search_type: 'SEARCH' | 'BROWSE';
+  current_rank: number | null;
+  prev_rank: number | null;
+  current_impressions: number | null;
+  trend: 'up' | 'down' | 'stable' | 'new';
 }

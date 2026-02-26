@@ -15,9 +15,22 @@ import {
   CheckCircle2,
   AlertTriangle,
   XCircle,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  Sparkles,
+  RotateCcw,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
-import { getBolSummaryForClient } from '../lib/bol-api';
-import type { BolCustomerAnalysisSummary, BolAnalysis, BolRecommendation } from '../types/bol';
+import { getBolSummaryForClient, getBolCompetitorsForClient, getBolKeywordsForClient } from '../lib/bol-api';
+import type {
+  BolCustomerAnalysisSummary,
+  BolAnalysis,
+  BolRecommendation,
+  BolCompetitorSnapshot,
+  BolKeywordRanking,
+} from '../types/bol';
 import clsx from 'clsx';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -30,7 +43,8 @@ type NavSection =
   | 'orders'
   | 'campaigns'
   | 'keywords'
-  | 'competitors';
+  | 'competitors'
+  | 'returns';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -71,12 +85,16 @@ function relativeTime(iso: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+function fmt(n: number, decimals = 0): string {
+  return n.toLocaleString('nl-NL', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
 // ── Shared mini components ─────────────────────────────────────────────────────
 
 function CircleScore({ score, size = 'sm' }: { score: number | null; size?: 'sm' | 'lg' }) {
-  const dim = size === 'lg' ? 72 : 52;
-  const r   = size === 'lg' ? 29 : 21;
-  const sw  = size === 'lg' ? 6  : 4;
+  const dim  = size === 'lg' ? 72 : 52;
+  const r    = size === 'lg' ? 29 : 21;
+  const sw   = size === 'lg' ? 6  : 4;
   const circ = 2 * Math.PI * r;
   const dash = ((score ?? 0) / 100) * circ;
   const col  = score === null ? '#94a3b8' : score >= 80 ? '#16a34a' : score >= 60 ? '#d97706' : '#dc2626';
@@ -127,14 +145,70 @@ function RecList({ recs }: { recs: BolRecommendation[] }) {
   );
 }
 
+/** A simple stat tile for section headers */
+function StatTile({
+  label, value, sub, color = 'default',
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  color?: 'default' | 'green' | 'amber' | 'red' | 'blue';
+}) {
+  const valueColor = {
+    default: 'text-slate-800',
+    green:   'text-green-600',
+    amber:   'text-amber-600',
+    red:     'text-red-600',
+    blue:    'text-blue-600',
+  }[color];
+  const bg = {
+    default: 'bg-white border-slate-200',
+    green:   'bg-green-50 border-green-200',
+    amber:   'bg-amber-50 border-amber-200',
+    red:     'bg-red-50 border-red-200',
+    blue:    'bg-blue-50 border-blue-200',
+  }[color];
+  return (
+    <div className={clsx('p-4 rounded-xl border', bg)}>
+      <p className="text-xs text-slate-500 mb-1">{label}</p>
+      <span className={clsx('text-3xl font-bold', valueColor)}>{value}</span>
+      {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
 // ── Overview Section ───────────────────────────────────────────────────────────
 
 function OverviewSection({ summary }: { summary: BolCustomerAnalysisSummary }) {
   const categories = [
-    { label: 'Content Quality',   analysis: summary.content,   description: 'Title completeness, pricing & keyword compliance' },
-    { label: 'Inventory Health',  analysis: summary.inventory, description: 'Stock levels and fulfilment model' },
-    { label: 'Order Performance', analysis: summary.orders,    description: 'Cancellation rate and fulfilment quality' },
+    { label: 'Content Quality',   analysis: summary.content,     description: 'Title completeness, pricing & keyword compliance' },
+    { label: 'Inventory Health',  analysis: summary.inventory,   description: 'Stock levels and fulfilment model' },
+    { label: 'Order Performance', analysis: summary.orders,      description: 'Cancellation rate and fulfilment quality' },
+    { label: 'Ad Performance',    analysis: summary.advertising, description: 'ROAS, budget utilisation and campaign health' },
   ] as const;
+
+  // Official bol.com KPI indicators
+  const perfFindings = summary.performance?.findings as {
+    indicators?: Array<{ name: string; status: string; score: number | null; norm: number | null }>;
+  } | null;
+  const kpiIndicators = perfFindings?.indicators ?? [];
+
+  const kpiLabel: Record<string, string> = {
+    CANCELLATION_RATE: 'Cancellation Rate',
+    FULFILMENT_RATE:   'Fulfilment Rate',
+    REVIEW_SCORE:      'Review Score',
+  };
+
+  const kpiStatusColor = (status: string) => {
+    if (status === 'GOOD')             return 'bg-green-50 text-green-700 border-green-200';
+    if (status === 'NEEDS_IMPROVEMENT') return 'bg-amber-50 text-amber-700 border-amber-200';
+    return 'bg-red-50 text-red-700 border-red-200';
+  };
+  const kpiStatusIcon = (status: string) => {
+    if (status === 'GOOD')             return <CheckCircle2 size={11} className="text-green-500" />;
+    if (status === 'NEEDS_IMPROVEMENT') return <AlertTriangle size={11} className="text-amber-500" />;
+    return <XCircle size={11} className="text-red-500" />;
+  };
 
   return (
     <div className="space-y-5">
@@ -143,7 +217,7 @@ function OverviewSection({ summary }: { summary: BolCustomerAnalysisSummary }) {
         <CircleScore score={summary.overall_score} size="lg" />
         <div className="flex-1 min-w-0">
           <h2 className="text-base font-semibold text-slate-900">Overall Health Score</h2>
-          <p className="text-sm text-slate-500 mt-0.5">Combined across content, inventory and orders.</p>
+          <p className="text-sm text-slate-500 mt-0.5">Weighted across content, inventory, orders, advertising, returns & performance.</p>
           {summary.overall_score !== null && (
             <span className={clsx('inline-block mt-2 text-xs font-semibold px-2 py-0.5 rounded border',
               scoreBg(summary.overall_score), scoreTextColor(summary.overall_score)
@@ -161,7 +235,7 @@ function OverviewSection({ summary }: { summary: BolCustomerAnalysisSummary }) {
       </div>
 
       {/* Category cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         {categories.map(({ label, analysis, description }) => (
           <div key={label} className={clsx('p-4 rounded-xl border', scoreBg(analysis?.score ?? null))}>
             <div className="flex items-center justify-between mb-2">
@@ -188,6 +262,34 @@ function OverviewSection({ summary }: { summary: BolCustomerAnalysisSummary }) {
           </div>
         ))}
       </div>
+
+      {/* Official bol.com KPIs */}
+      {kpiIndicators.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100">
+            <h3 className="text-sm font-semibold text-slate-800">Official bol.com KPIs</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Status as reported by the bol.com Retailer API</p>
+          </div>
+          <div className="flex divide-x divide-slate-100">
+            {kpiIndicators.map(ind => (
+              <div key={ind.name} className="flex-1 p-4">
+                <p className="text-xs text-slate-500 mb-2">{kpiLabel[ind.name] ?? ind.name}</p>
+                <div className="flex items-center gap-2 mb-1.5">
+                  {kpiStatusIcon(ind.status)}
+                  <span className={clsx('text-xs font-bold px-2 py-0.5 rounded border', kpiStatusColor(ind.status))}>
+                    {ind.status.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                {ind.score !== null && (
+                  <p className="text-xs text-slate-400">Score: <span className="font-semibold text-slate-600">{ind.score}</span>
+                    {ind.norm !== null && <span className="text-slate-300"> / norm {ind.norm}</span>}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -197,9 +299,12 @@ function OverviewSection({ summary }: { summary: BolCustomerAnalysisSummary }) {
 function RecommendationsSection({ summary }: { summary: BolCustomerAnalysisSummary }) {
   type RichRec = BolRecommendation & { category: string };
   const allRecs: RichRec[] = [
-    ...(summary.content?.recommendations   ?? []).map(r => ({ ...r, category: 'Content' })),
-    ...(summary.inventory?.recommendations ?? []).map(r => ({ ...r, category: 'Inventory' })),
-    ...(summary.orders?.recommendations    ?? []).map(r => ({ ...r, category: 'Orders' })),
+    ...(summary.content?.recommendations     ?? []).map(r => ({ ...r, category: 'Content' })),
+    ...(summary.inventory?.recommendations   ?? []).map(r => ({ ...r, category: 'Inventory' })),
+    ...(summary.orders?.recommendations      ?? []).map(r => ({ ...r, category: 'Orders' })),
+    ...(summary.advertising?.recommendations ?? []).map(r => ({ ...r, category: 'Ads' })),
+    ...(summary.returns?.recommendations     ?? []).map(r => ({ ...r, category: 'Returns' })),
+    ...(summary.performance?.recommendations ?? []).map(r => ({ ...r, category: 'KPIs' })),
   ];
 
   const high   = allRecs.filter(r => r.priority === 'high');
@@ -263,13 +368,29 @@ function ProductsSection({ analysis }: { analysis: BolAnalysis | null }) {
     titles_missing?: number;
     price_set_pct?: number;
     forbidden_keyword_warning?: boolean;
+    total_visits?: number;
+    total_impressions?: number;
+    avg_buy_box_pct?: number;
+    per_offer_insights?: Array<{
+      offerId: string;
+      title?: string;
+      visits: number;
+      impressions: number;
+      buyBoxPct: number;
+    }>;
   };
 
-  const total = f.offers_count ?? 0;
-  const inRange = f.titles_in_range ?? 0;
-  const short   = f.titles_short    ?? 0;
-  const missing = f.titles_missing  ?? 0;
+  const total    = f.offers_count ?? 0;
+  const inRange  = f.titles_in_range ?? 0;
+  const short    = f.titles_short    ?? 0;
+  const missing  = f.titles_missing  ?? 0;
   const inRangePct = total > 0 ? Math.round((inRange / total) * 100) : 0;
+
+  const hasInsights = (f.per_offer_insights?.length ?? 0) > 0;
+  const sortedInsights = [...(f.per_offer_insights ?? [])].sort((a, b) => b.visits - a.visits);
+
+  const buyBoxColor = (pct: number) =>
+    pct >= 80 ? 'text-green-600' : pct >= 50 ? 'text-amber-600' : 'text-red-600';
 
   return (
     <div className="space-y-4">
@@ -283,28 +404,42 @@ function ProductsSection({ analysis }: { analysis: BolAnalysis | null }) {
         </div>
       )}
 
+      {/* Stats row */}
       <div className="grid grid-cols-3 gap-3">
-        {/* Total offers */}
-        <div className="p-4 bg-white border border-slate-200 rounded-xl col-span-3 sm:col-span-1">
-          <p className="text-xs text-slate-500 mb-1">Total offers</p>
-          <span className="text-3xl font-bold text-slate-800">{total}</span>
-        </div>
-        {/* Avg title score */}
-        <div className={clsx('p-4 rounded-xl border', scoreBg(f.avg_title_score ?? null))}>
-          <p className="text-xs text-slate-500 mb-1">Avg title score</p>
-          <span className={clsx('text-3xl font-bold', scoreTextColor(f.avg_title_score ?? null))}>
-            {f.avg_title_score ?? 0}
-          </span>
-          <span className="text-sm text-slate-400">/100</span>
-        </div>
-        {/* Price set */}
-        <div className={clsx('p-4 rounded-xl border', (f.price_set_pct ?? 100) < 100 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200')}>
-          <p className="text-xs text-slate-500 mb-1">Offers with price</p>
-          <span className={clsx('text-3xl font-bold', (f.price_set_pct ?? 100) < 100 ? 'text-red-600' : 'text-green-600')}>
-            {f.price_set_pct ?? 100}%
-          </span>
-        </div>
+        <StatTile label="Total offers" value={total} />
+        <StatTile
+          label="Avg title score"
+          value={`${f.avg_title_score ?? 0}`}
+          sub="out of 100"
+          color={!f.avg_title_score ? 'default' : f.avg_title_score >= 80 ? 'green' : f.avg_title_score >= 60 ? 'amber' : 'red'}
+        />
+        <StatTile
+          label="Offers with price"
+          value={`${f.price_set_pct ?? 100}%`}
+          color={(f.price_set_pct ?? 100) < 100 ? 'red' : 'green'}
+        />
       </div>
+
+      {/* Offer insights stats row (only shown after at least one extended sync) */}
+      {hasInsights && (
+        <div className="grid grid-cols-3 gap-3">
+          <StatTile
+            label="Total visits (30d)"
+            value={fmt(f.total_visits ?? 0)}
+            color="blue"
+          />
+          <StatTile
+            label="Total impressions (30d)"
+            value={fmt(f.total_impressions ?? 0)}
+            color="blue"
+          />
+          <StatTile
+            label="Avg buy box %"
+            value={`${f.avg_buy_box_pct ?? 0}%`}
+            color={!f.avg_buy_box_pct ? 'default' : f.avg_buy_box_pct >= 80 ? 'green' : f.avg_buy_box_pct >= 50 ? 'amber' : 'red'}
+          />
+        </div>
+      )}
 
       {/* Title quality breakdown */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
@@ -336,6 +471,46 @@ function ProductsSection({ analysis }: { analysis: BolAnalysis | null }) {
           ))}
         </div>
       </div>
+
+      {/* Offer insights table */}
+      {hasInsights && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100">
+            <h3 className="text-sm font-semibold text-slate-800">Offer Insights</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Sorted by visits (last 30 days)</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="px-4 py-2 text-left font-semibold text-slate-500">Title</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">Visits</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">Impressions</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">Buy Box %</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {sortedInsights.slice(0, 20).map((row, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-4 py-2.5 text-slate-700 max-w-xs">
+                      <span className="block truncate" title={row.title ?? row.offerId}>
+                        {row.title ? row.title.slice(0, 55) + (row.title.length > 55 ? '…' : '') : row.offerId}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-slate-600 font-medium">{fmt(row.visits)}</td>
+                    <td className="px-4 py-2.5 text-right text-slate-600">{fmt(row.impressions)}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      <span className={clsx('font-bold', buyBoxColor(row.buyBoxPct))}>
+                        {row.buyBoxPct}%
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <RecList recs={analysis.recommendations ?? []} />
     </div>
@@ -502,33 +677,447 @@ function OrdersSection({ analysis }: { analysis: BolAnalysis | null }) {
   );
 }
 
-// ── Placeholder Section ────────────────────────────────────────────────────────
+// ── Campaign Section ───────────────────────────────────────────────────────────
 
-function PlaceholderSection({ title, description, steps }: {
-  title: string;
-  description: string;
-  steps: string[];
-}) {
+function CampaignSection({ analysis }: { analysis: BolAnalysis | null }) {
+  if (!analysis) return <SyncPending />;
+
+  type CampaignRow = {
+    id: string;
+    name: string;
+    spend: number;
+    impressions: number;
+    clicks: number;
+    revenue: number;
+    roas: number;
+    budget: number;
+    budget_utilisation_pct: number;
+  };
+
+  const f = analysis.findings as {
+    campaigns_count?: number;
+    active_campaigns?: number;
+    total_spend?: number;
+    total_impressions?: number;
+    total_clicks?: number;
+    ctr_pct?: number;
+    total_revenue?: number;
+    roas?: number;
+    conversion_rate_pct?: number;
+    per_campaign?: CampaignRow[];
+  };
+
+  const roas    = f.roas ?? 0;
+  const roasColor = roas >= 5 ? 'green' : roas >= 3 ? 'amber' : 'red';
+
   return (
-    <div className="flex flex-col items-center justify-center py-12 px-8 text-center">
-      <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center mb-4">
-        <Clock size={20} className="text-slate-400" />
+    <div className="space-y-4">
+      {/* Stats row */}
+      <div className="grid grid-cols-4 gap-3">
+        <StatTile
+          label="Total ad spend"
+          value={`€${fmt(f.total_spend ?? 0, 2)}`}
+          sub="last 30 days"
+        />
+        <StatTile
+          label="ROAS"
+          value={`${fmt(roas, 2)}×`}
+          sub="revenue per €1 spent"
+          color={roasColor}
+        />
+        <StatTile
+          label="CTR"
+          value={`${fmt(f.ctr_pct ?? 0, 2)}%`}
+          sub={`${fmt(f.total_clicks ?? 0)} clicks`}
+          color={(f.ctr_pct ?? 0) > 0.5 ? 'green' : 'amber'}
+        />
+        <StatTile
+          label="Conversions"
+          value={fmt(Math.round((f.total_clicks ?? 0) * ((f.conversion_rate_pct ?? 0) / 100)))}
+          sub={`${fmt(f.conversion_rate_pct ?? 0, 1)}% conv. rate`}
+        />
       </div>
-      <h3 className="text-base font-semibold text-slate-800 mb-2">{title}</h3>
-      <p className="text-sm text-slate-500 max-w-sm mb-6 leading-relaxed">{description}</p>
-      {steps.length > 0 && (
-        <div className="w-full max-w-xs text-left bg-slate-50 border border-slate-200 rounded-xl p-4">
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2.5">What will be included</p>
-          <ul className="space-y-2">
-            {steps.map((s, i) => (
-              <li key={i} className="flex items-center gap-2 text-xs text-slate-500">
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-300 flex-shrink-0" />
-                {s}
-              </li>
-            ))}
-          </ul>
+
+      {/* Per-campaign breakdown */}
+      {(f.per_campaign?.length ?? 0) > 0 && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100">
+            <h3 className="text-sm font-semibold text-slate-800">Campaign Breakdown</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Sorted by spend descending · Amber = budget &gt;95% used</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="px-4 py-2 text-left font-semibold text-slate-500">Campaign</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">Spend</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">Impressions</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">Clicks</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">ROAS</th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-500 w-32">Budget used</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {f.per_campaign!.map((c, i) => {
+                  const capping = c.budget_utilisation_pct > 95;
+                  return (
+                    <tr key={i} className={clsx('hover:bg-slate-50', capping && 'bg-amber-50/40')}>
+                      <td className="px-4 py-2.5 text-slate-700 max-w-xs">
+                        <span className="block truncate" title={c.name}>{c.name}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-medium text-slate-800">€{fmt(c.spend, 2)}</td>
+                      <td className="px-4 py-2.5 text-right text-slate-600">{fmt(c.impressions)}</td>
+                      <td className="px-4 py-2.5 text-right text-slate-600">{fmt(c.clicks)}</td>
+                      <td className={clsx('px-4 py-2.5 text-right font-bold',
+                        c.roas >= 5 ? 'text-green-600' : c.roas >= 3 ? 'text-amber-600' : 'text-red-600'
+                      )}>
+                        {fmt(c.roas, 2)}×
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                            <div
+                              className={clsx('h-full rounded-full transition-all',
+                                capping ? 'bg-amber-400' : 'bg-blue-400'
+                              )}
+                              style={{ width: `${Math.min(c.budget_utilisation_pct, 100)}%` }}
+                            />
+                          </div>
+                          <span className={clsx('text-[10px] font-semibold w-8 text-right',
+                            capping ? 'text-amber-600' : 'text-slate-500'
+                          )}>
+                            {Math.round(c.budget_utilisation_pct)}%
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
+
+      <RecList recs={analysis.recommendations ?? []} />
+    </div>
+  );
+}
+
+// ── Competitor Section ─────────────────────────────────────────────────────────
+
+function CompetitorSection({ bolCustomerId }: { bolCustomerId: string }) {
+  const [competitors, setCompetitors] = useState<BolCompetitorSnapshot[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 15;
+
+  useEffect(() => {
+    setLoading(true);
+    getBolCompetitorsForClient(bolCustomerId)
+      .then(r => setCompetitors(r.competitors))
+      .catch(() => setCompetitors([]))
+      .finally(() => setLoading(false));
+  }, [bolCustomerId]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <RefreshCw size={18} className="animate-spin text-slate-400" />
+      </div>
+    );
+  }
+
+  if (!competitors?.length) return <SyncPending />;
+
+  const buyBoxWins = competitors.filter(c => c.buy_box_winner).length;
+  const winRate    = Math.round((buyBoxWins / competitors.length) * 100);
+  const avgComps   = Math.round(competitors.reduce((sum, c) => sum + (c.competitor_count ?? 0), 0) / competitors.length);
+
+  // Sort: losers first, then by price gap
+  const sorted = [...competitors].sort((a, b) => {
+    if (a.buy_box_winner && !b.buy_box_winner) return 1;
+    if (!a.buy_box_winner && b.buy_box_winner) return -1;
+    const gapA = a.our_price && a.lowest_competing_price ? a.our_price - a.lowest_competing_price : 0;
+    const gapB = b.our_price && b.lowest_competing_price ? b.our_price - b.lowest_competing_price : 0;
+    return gapB - gapA;
+  });
+
+  const paginated = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+
+  return (
+    <div className="space-y-4">
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <StatTile
+          label="Buy box win rate"
+          value={`${winRate}%`}
+          sub={`${buyBoxWins} of ${competitors.length} products`}
+          color={winRate >= 70 ? 'green' : winRate >= 40 ? 'amber' : 'red'}
+        />
+        <StatTile label="Products tracked" value={competitors.length} />
+        <StatTile label="Avg competitors" value={avgComps} sub="per product" />
+      </div>
+
+      {/* Competitor table */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800">Competitor Overview</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Losers shown first · Red = competitor lower than us</p>
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1 text-xs text-slate-500">
+              <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+                className="p-1 rounded hover:bg-slate-100 disabled:opacity-30">
+                <ChevronLeft size={14} />
+              </button>
+              <span>{page + 1}/{totalPages}</span>
+              <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
+                className="p-1 rounded hover:bg-slate-100 disabled:opacity-30">
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-100">
+                <th className="px-4 py-2 text-left font-semibold text-slate-500">EAN</th>
+                <th className="px-4 py-2 text-center font-semibold text-slate-500">Buy Box</th>
+                <th className="px-4 py-2 text-right font-semibold text-slate-500">Our Price</th>
+                <th className="px-4 py-2 text-right font-semibold text-slate-500">Lowest</th>
+                <th className="px-4 py-2 text-right font-semibold text-slate-500">Competitors</th>
+                <th className="px-4 py-2 text-right font-semibold text-slate-500">Rating</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {paginated.map((c, i) => {
+                const cheaper = c.lowest_competing_price !== null && c.our_price !== null &&
+                  c.lowest_competing_price < c.our_price;
+                return (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-4 py-2.5 font-mono text-slate-600">{c.ean}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      {c.buy_box_winner
+                        ? <CheckCircle2 size={14} className="text-green-500 inline" />
+                        : <XCircle size={14} className="text-red-400 inline" />}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-slate-600">
+                      {c.our_price !== null ? `€${fmt(c.our_price, 2)}` : '—'}
+                    </td>
+                    <td className={clsx('px-4 py-2.5 text-right font-medium flex items-center justify-end gap-1',
+                      cheaper ? 'text-red-600' : 'text-slate-600'
+                    )}>
+                      {c.lowest_competing_price !== null ? `€${fmt(c.lowest_competing_price, 2)}` : '—'}
+                      {cheaper && <TrendingDown size={11} className="text-red-500" />}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-slate-600">{c.competitor_count ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-right text-slate-600">
+                      {c.rating_score !== null
+                        ? <span>{c.rating_score} <span className="text-slate-400">({c.rating_count})</span></span>
+                        : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Keywords Section ───────────────────────────────────────────────────────────
+
+function KeywordsSection({ bolCustomerId }: { bolCustomerId: string }) {
+  const [rankings, setRankings] = useState<BolKeywordRanking[] | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    getBolKeywordsForClient(bolCustomerId)
+      .then(r => setRankings(r.rankings))
+      .catch(() => setRankings([]))
+      .finally(() => setLoading(false));
+  }, [bolCustomerId]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <RefreshCw size={18} className="animate-spin text-slate-400" />
+      </div>
+    );
+  }
+
+  if (!rankings?.length) return <SyncPending />;
+
+  const searchRankings = rankings.filter(r => r.search_type === 'SEARCH');
+  const browseRankings = rankings.filter(r => r.search_type === 'BROWSE');
+
+  const avgSearch = searchRankings.length > 0
+    ? Math.round(searchRankings.reduce((s, r) => s + (r.current_rank ?? 0), 0) / searchRankings.length)
+    : null;
+  const avgBrowse = browseRankings.length > 0
+    ? Math.round(browseRankings.reduce((s, r) => s + (r.current_rank ?? 0), 0) / browseRankings.length)
+    : null;
+
+  // Build combined rows by EAN
+  const byEan = new Map<string, { search?: BolKeywordRanking; browse?: BolKeywordRanking }>();
+  for (const r of rankings) {
+    if (!byEan.has(r.ean)) byEan.set(r.ean, {});
+    if (r.search_type === 'SEARCH') byEan.get(r.ean)!.search = r;
+    else byEan.get(r.ean)!.browse = r;
+  }
+
+  const rows = Array.from(byEan.entries()).sort((a, b) => {
+    const ra = a[1].search?.current_rank ?? 9999;
+    const rb = b[1].search?.current_rank ?? 9999;
+    return ra - rb;
+  });
+
+  const TrendIcon = ({ trend }: { trend?: string }) => {
+    if (trend === 'up')   return <TrendingUp size={12} className="text-green-500" />;
+    if (trend === 'down') return <TrendingDown size={12} className="text-red-500" />;
+    if (trend === 'new')  return <Sparkles size={12} className="text-blue-500" />;
+    return <Minus size={12} className="text-slate-400" />;
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <StatTile label="Ranked products" value={byEan.size} />
+        <StatTile
+          label="Avg search rank"
+          value={avgSearch ?? '—'}
+          sub="lower = better"
+          color={avgSearch !== null ? (avgSearch <= 20 ? 'green' : avgSearch <= 50 ? 'amber' : 'red') : 'default'}
+        />
+        <StatTile
+          label="Avg browse rank"
+          value={avgBrowse ?? '—'}
+          sub="lower = better"
+          color={avgBrowse !== null ? (avgBrowse <= 20 ? 'green' : avgBrowse <= 50 ? 'amber' : 'red') : 'default'}
+        />
+      </div>
+
+      {/* Rankings table */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-800">Product Rankings</h3>
+          <p className="text-xs text-slate-400 mt-0.5">Sorted by search rank (best first) · Lower number = better position</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-100">
+                <th className="px-4 py-2 text-left font-semibold text-slate-500">EAN</th>
+                <th className="px-4 py-2 text-right font-semibold text-slate-500">Search Rank</th>
+                <th className="px-4 py-2 text-center font-semibold text-slate-500">Trend</th>
+                <th className="px-4 py-2 text-right font-semibold text-slate-500">Browse Rank</th>
+                <th className="px-4 py-2 text-right font-semibold text-slate-500">Impressions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map(([ean, data], i) => (
+                <tr key={i} className="hover:bg-slate-50">
+                  <td className="px-4 py-2.5 font-mono text-slate-600">{ean}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    {data.search?.current_rank !== null && data.search?.current_rank !== undefined
+                      ? <span className={clsx('font-bold',
+                          data.search.current_rank <= 20 ? 'text-green-600' :
+                          data.search.current_rank <= 50 ? 'text-amber-600' : 'text-slate-600'
+                        )}>#{data.search.current_rank}</span>
+                      : <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="px-4 py-2.5 flex justify-center">
+                    <TrendIcon trend={data.search?.trend} />
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    {data.browse?.current_rank !== null && data.browse?.current_rank !== undefined
+                      ? <span className="text-slate-600 font-medium">#{data.browse.current_rank}</span>
+                      : <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-slate-600">
+                    {data.search?.current_impressions != null
+                      ? fmt(data.search.current_impressions)
+                      : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Returns Section ────────────────────────────────────────────────────────────
+
+function ReturnsSection({ analysis }: { analysis: BolAnalysis | null }) {
+  if (!analysis) return <SyncPending />;
+
+  const f = analysis.findings as {
+    open_count?: number;
+    handled_count?: number;
+    total_count?: number;
+    top_reasons?: Array<{ reason: string; count: number }>;
+  };
+
+  const open    = f.open_count    ?? 0;
+  const handled = f.handled_count ?? 0;
+  const total   = f.total_count   ?? (open + handled);
+  const topReason = f.top_reasons?.[0]?.reason ?? '—';
+  const maxReason = Math.max(...(f.top_reasons?.map(r => r.count) ?? [1]));
+
+  return (
+    <div className="space-y-4">
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <StatTile
+          label="Open returns"
+          value={open}
+          sub="awaiting processing"
+          color={open > 50 ? 'red' : open > 20 ? 'amber' : 'green'}
+        />
+        <StatTile label="Total processed" value={handled} sub="last period" />
+        <div className="p-4 bg-white border border-slate-200 rounded-xl">
+          <p className="text-xs text-slate-500 mb-1">Top return reason</p>
+          <span className="text-sm font-semibold text-slate-800 leading-snug block">{topReason}</span>
+        </div>
+      </div>
+
+      {/* Return reasons bar chart */}
+      {(f.top_reasons?.length ?? 0) > 0 && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100">
+            <h3 className="text-sm font-semibold text-slate-800">Top Return Reasons</h3>
+          </div>
+          <div className="p-4 space-y-3">
+            {f.top_reasons!.map((reason, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className="text-xs text-slate-600 w-48 truncate flex-shrink-0" title={reason.reason}>
+                  {reason.reason}
+                </span>
+                <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-orange-400 transition-all"
+                    style={{ width: `${Math.round((reason.count / maxReason) * 100)}%` }}
+                  />
+                </div>
+                <span className="text-xs font-semibold text-slate-600 w-8 text-right">{reason.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <RecList recs={analysis.recommendations ?? []} />
     </div>
   );
 }
@@ -539,16 +1128,16 @@ const NAV_ITEMS: {
   id: NavSection;
   label: string;
   icon: React.ReactNode;
-  soon?: boolean;
 }[] = [
   { id: 'overview',        label: 'Health Scores',        icon: <LayoutDashboard size={14} /> },
   { id: 'recommendations', label: 'Recommendations',      icon: <Lightbulb size={14} /> },
   { id: 'products',        label: 'Products',             icon: <Package size={14} /> },
   { id: 'inventory',       label: 'Inventory',            icon: <Layers size={14} /> },
   { id: 'orders',          label: 'Orders',               icon: <ShoppingCart size={14} /> },
-  { id: 'campaigns',       label: 'Campaign Performance', icon: <BarChart3 size={14} />, soon: true },
-  { id: 'keywords',        label: 'Keyword Intelligence', icon: <Key size={14} />,       soon: true },
-  { id: 'competitors',     label: 'Competitor Research',  icon: <Search size={14} />,    soon: true },
+  { id: 'campaigns',       label: 'Campaign Performance', icon: <BarChart3 size={14} /> },
+  { id: 'returns',         label: 'Returns',              icon: <RotateCcw size={14} /> },
+  { id: 'keywords',        label: 'Keyword Intelligence', icon: <Key size={14} /> },
+  { id: 'competitors',     label: 'Competitor Research',  icon: <Search size={14} /> },
 ];
 
 export default function BolDashboard() {
@@ -568,6 +1157,7 @@ export default function BolDashboard() {
 
   const clientName = (summary?.customer as { clients?: { name?: string } })?.clients?.name ?? 'Client';
   const sellerName = summary?.customer?.seller_name ?? '';
+  const bolCustomerId = summary?.customer?.id ?? '';
 
   return (
     <div className="flex h-full flex-col">
@@ -622,24 +1212,16 @@ export default function BolDashboard() {
             {NAV_ITEMS.map(item => (
               <button
                 key={item.id}
-                onClick={() => !item.soon && setActiveSection(item.id)}
-                disabled={item.soon}
+                onClick={() => setActiveSection(item.id)}
                 className={clsx(
                   'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left',
-                  activeSection === item.id && !item.soon
+                  activeSection === item.id
                     ? 'bg-orange-50 text-orange-700'
-                    : item.soon
-                    ? 'text-slate-300 cursor-not-allowed'
                     : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                 )}
               >
                 {item.icon}
                 <span className="flex-1">{item.label}</span>
-                {item.soon && (
-                  <span className="text-[9px] font-bold uppercase text-slate-300 bg-slate-100 px-1 py-0.5 rounded">
-                    soon
-                  </span>
-                )}
               </button>
             ))}
           </nav>
@@ -670,42 +1252,13 @@ export default function BolDashboard() {
               {activeSection === 'products'        && <ProductsSection analysis={summary.content} />}
               {activeSection === 'inventory'       && <InventorySection analysis={summary.inventory} />}
               {activeSection === 'orders'          && <OrdersSection analysis={summary.orders} />}
-
-              {activeSection === 'campaigns' && (
-                <PlaceholderSection
-                  title="Campaign Performance"
-                  description="Connect Advertising API credentials to see ad spend, ROAS, impressions and conversion data for all bol.com campaigns."
-                  steps={[
-                    'Sponsored Products campaign stats',
-                    'Ad group performance breakdown',
-                    'Keyword click & conversion data',
-                    'Budget utilisation and ROAS trends',
-                  ]}
-                />
+              {activeSection === 'campaigns'       && <CampaignSection analysis={summary.advertising} />}
+              {activeSection === 'returns'         && <ReturnsSection analysis={summary.returns} />}
+              {activeSection === 'competitors'     && bolCustomerId && (
+                <CompetitorSection bolCustomerId={bolCustomerId} />
               )}
-              {activeSection === 'keywords' && (
-                <PlaceholderSection
-                  title="Keyword Intelligence"
-                  description="Automated keyword research and performance tracking to optimise search visibility on bol.com."
-                  steps={[
-                    'Top search term discovery',
-                    'Keyword ranking by category',
-                    'Search volume estimates',
-                    'Keyword gaps vs competitors',
-                  ]}
-                />
-              )}
-              {activeSection === 'competitors' && (
-                <PlaceholderSection
-                  title="Competitor Research"
-                  description="Monitor competitor pricing, assortment and Buy Box win rates to stay ahead in your category."
-                  steps={[
-                    'Buy Box win rate tracking',
-                    'Competitor price monitoring',
-                    'Assortment gap analysis',
-                    'Category ranking comparison',
-                  ]}
-                />
+              {activeSection === 'keywords'        && bolCustomerId && (
+                <KeywordsSection bolCustomerId={bolCustomerId} />
               )}
             </>
           )}
