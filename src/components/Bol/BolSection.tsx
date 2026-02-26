@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Package, ShoppingCart, FileText, RefreshCw } from 'lucide-react';
+import { Package, ShoppingCart, FileText, RefreshCw, ExternalLink } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { getBolSummaryForClient } from '../../lib/bol-api';
 import type { BolCustomerAnalysisSummary, BolAnalysis, BolRecommendation } from '../../types/bol';
 
@@ -113,7 +114,7 @@ function CategoryCard({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function BolSection({ clientId }: { clientId: string }) {
+export default function BolSection({ clientId }: { clientId: string; }) {
   const [summary, setSummary] = useState<BolCustomerAnalysisSummary | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
 
@@ -205,6 +206,17 @@ export default function BolSection({ clientId }: { clientId: string }) {
           title="Orders"
           analysis={summary.orders}
         />
+      </div>
+
+      {/* Footer: link to full dashboard */}
+      <div className="flex-shrink-0 px-3 py-2.5 border-t border-slate-100">
+        <Link
+          to={`/clients/${clientId}/bol`}
+          className="flex items-center justify-center gap-1.5 w-full py-1.5 text-xs font-medium text-orange-600 hover:text-orange-700 hover:bg-orange-50 rounded-md transition-colors"
+        >
+          <ExternalLink size={11} />
+          View full dashboard
+        </Link>
       </div>
     </div>
   );
