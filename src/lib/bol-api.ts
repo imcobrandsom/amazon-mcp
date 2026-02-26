@@ -9,6 +9,8 @@ import type {
   BolCompetitorSnapshot,
   BolKeywordRanking,
   BolProduct,
+  BolCampaignPerformance,
+  BolKeywordPerformance,
 } from '../types/bol';
 import { supabase } from './supabase';
 
@@ -118,6 +120,16 @@ export async function getBolSummaryForClient(clientId: string): Promise<BolCusto
     overall_score: overall,
     last_sync_at: customer.last_sync_at,
   };
+}
+
+// ── Campaign + keyword time-series ────────────────────────────────────────────
+
+export function getBolCampaignsForClient(customerId: string): Promise<{
+  campaigns: BolCampaignPerformance[];
+  keywords: BolKeywordPerformance[];
+  count: number;
+}> {
+  return apiFetch(`/bol-campaigns?customerId=${customerId}`);
 }
 
 // ── Products (inventory + listings join) ──────────────────────────────────────

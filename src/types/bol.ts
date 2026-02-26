@@ -75,6 +75,48 @@ export interface BolProduct {
   onHold: boolean;
 }
 
+// ── Campaign / keyword time-series ────────────────────────────────────────────
+
+export interface BolCampaignPerformance {
+  id: string;
+  bol_customer_id: string;
+  campaign_id: string;
+  campaign_name: string | null;
+  campaign_type: string | null;   // 'MANUAL' | 'AUTOMATIC'
+  state: string | null;           // 'ENABLED' | 'PAUSED' | 'ARCHIVED'
+  budget: number | null;
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  ctr_pct: number | null;
+  avg_cpc: number | null;
+  revenue: number | null;
+  roas: number | null;
+  acos: number | null;
+  conversions: number | null;
+  cvr_pct: number | null;
+  synced_at: string;
+}
+
+export interface BolKeywordPerformance {
+  id: string;
+  bol_customer_id: string;
+  keyword_id: string;
+  keyword_text: string | null;
+  match_type: string | null;      // 'EXACT' | 'PHRASE'
+  campaign_id: string;
+  ad_group_id: string | null;
+  bid: number | null;
+  state: string | null;
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  revenue: number | null;
+  acos: number | null;
+  conversions: number | null;
+  synced_at: string;
+}
+
 // ── Competitor snapshot ───────────────────────────────────────────────────────
 
 export interface BolCompetitorSnapshot {

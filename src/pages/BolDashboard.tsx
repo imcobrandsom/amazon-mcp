@@ -28,6 +28,7 @@ import {
   getBolCompetitorsForClient,
   getBolKeywordsForClient,
   getBolProducts,
+  getBolCampaignsForClient,
   triggerSync,
   type BolSyncType,
 } from '../lib/bol-api';
@@ -38,6 +39,8 @@ import type {
   BolCompetitorSnapshot,
   BolKeywordRanking,
   BolProduct,
+  BolCampaignPerformance,
+  BolKeywordPerformance,
 } from '../types/bol';
 import clsx from 'clsx';
 
@@ -862,40 +865,63 @@ function OrdersSection({ analysis }: { analysis: BolAnalysis | null }) {
 
 // ── Campaign Section ───────────────────────────────────────────────────────────
 
-function CampaignSection({ analysis }: { analysis: BolAnalysis | null }) {
-  if (!analysis) return <SyncPending section="campaign" />;
+function CampaignSection({
+  analysis,
+  bolCustomerId,
+}: {
+  analysis: BolAnalysis | null;
+  bolCustomerId: string;
+}) {
+  const [campData, setCampData] = useState<{
+    campaigns: BolCampaignPerformance[];
+    keywords: BolKeywordPerformance[];
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  type CampaignRow = {
-    id: string;
-    name: string;
-    spend: number;
-    impressions: number;
-    clicks: number;
-    revenue: number;
-    roas: number;
-    budget: number;
-    budget_utilisation_pct: number;
-  };
+  useEffect(() => {
+    if (!bolCustomerId) return;
+    setLoading(true);
+    getBolCampaignsForClient(bolCustomerId)
+      .then(r => setCampData({ campaigns: r.campaigns, keywords: r.keywords }))
+      .catch(() => setCampData({ campaigns: [], keywords: [] }))
+      .finally(() => setLoading(false));
+  }, [bolCustomerId]);
 
-  const f = analysis.findings as {
-    campaigns_count?: number;
-    active_campaigns?: number;
+  // Aggregate stats still come from analysis.findings (correct 30-day totals)
+  const f = (analysis?.findings ?? {}) as {
     total_spend?: number;
-    total_impressions?: number;
     total_clicks?: number;
     ctr_pct?: number;
-    total_revenue?: number;
     roas?: number;
     conversion_rate_pct?: number;
-    per_campaign?: CampaignRow[];
   };
-
-  const roas    = f.roas ?? 0;
+  const roas      = f.roas ?? 0;
   const roasColor = roas >= 5 ? 'green' : roas >= 3 ? 'amber' : 'red';
+
+  if (!analysis) return <SyncPending section="campaign" />;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-slate-400">
+        <RefreshCw size={18} className="animate-spin mr-2" />
+        <span className="text-sm">Loading campaign data…</span>
+      </div>
+    );
+  }
+
+  const campaigns = [...(campData?.campaigns ?? [])].sort(
+    (a, b) => (b.spend ?? 0) - (a.spend ?? 0)
+  );
+  const keywords = [...(campData?.keywords ?? [])]
+    .sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0))
+    .slice(0, 20);
+
+  const acosColor = (v: number | null) =>
+    v == null ? 'text-slate-400' : v <= 20 ? 'text-green-600' : v <= 40 ? 'text-amber-600' : 'text-red-600';
 
   return (
     <div className="space-y-4">
-      {/* Stats row */}
+      {/* Stats row — from analysis.findings (30-day aggregates) */}
       <div className="grid grid-cols-4 gap-3">
         <StatTile
           label="Total ad spend"
@@ -921,40 +947,71 @@ function CampaignSection({ analysis }: { analysis: BolAnalysis | null }) {
         />
       </div>
 
-      {/* Per-campaign breakdown */}
-      {(f.per_campaign?.length ?? 0) > 0 && (
+      {/* Per-campaign breakdown — from bol_campaign_performance */}
+      {campaigns.length === 0 ? (
+        <SyncPending section="campaign" />
+      ) : (
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-100">
             <h3 className="text-sm font-semibold text-slate-800">Campaign Breakdown</h3>
-            <p className="text-xs text-slate-400 mt-0.5">Sorted by spend descending · Amber = budget &gt;95% used</p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Sorted by spend · Amber = budget &gt;95% used · ACOS = ad cost of sales
+            </p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100">
                   <th className="px-4 py-2 text-left font-semibold text-slate-500">Campaign</th>
+                  <th className="px-4 py-2 text-center font-semibold text-slate-500">Type</th>
+                  <th className="px-4 py-2 text-center font-semibold text-slate-500">State</th>
                   <th className="px-4 py-2 text-right font-semibold text-slate-500">Spend</th>
-                  <th className="px-4 py-2 text-right font-semibold text-slate-500">Impressions</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">Impr.</th>
                   <th className="px-4 py-2 text-right font-semibold text-slate-500">Clicks</th>
                   <th className="px-4 py-2 text-right font-semibold text-slate-500">ROAS</th>
-                  <th className="px-4 py-2 text-left font-semibold text-slate-500 w-32">Budget used</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">ACOS</th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-500 w-32">Budget</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {f.per_campaign!.map((c, i) => {
-                  const capping = c.budget_utilisation_pct > 95;
+                {campaigns.map((c, i) => {
+                  const budgetUtil = c.budget && c.spend != null
+                    ? (c.spend / c.budget) * 100
+                    : 0;
+                  const capping = budgetUtil > 95;
+                  const rVal = c.roas ?? 0;
                   return (
                     <tr key={i} className={clsx('hover:bg-slate-50', capping && 'bg-amber-50/40')}>
                       <td className="px-4 py-2.5 text-slate-700 max-w-xs">
-                        <span className="block truncate" title={c.name}>{c.name}</span>
+                        <span className="block truncate" title={c.campaign_name ?? undefined}>
+                          {c.campaign_name ?? c.campaign_id}
+                        </span>
                       </td>
-                      <td className="px-4 py-2.5 text-right font-medium text-slate-800">€{fmt(c.spend, 2)}</td>
-                      <td className="px-4 py-2.5 text-right text-slate-600">{fmt(c.impressions)}</td>
-                      <td className="px-4 py-2.5 text-right text-slate-600">{fmt(c.clicks)}</td>
+                      <td className="px-4 py-2.5 text-center">
+                        {c.campaign_type ? (
+                          <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600">
+                            {c.campaign_type === 'AUTOMATIC' ? 'AUTO' : c.campaign_type}
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={clsx(
+                          'inline-block w-2 h-2 rounded-full',
+                          c.state === 'ENABLED' ? 'bg-green-500' : c.state === 'PAUSED' ? 'bg-amber-400' : 'bg-slate-300'
+                        )} title={c.state ?? undefined} />
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-medium text-slate-800">
+                        €{fmt(c.spend ?? 0, 2)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-slate-600">{fmt(c.impressions ?? 0)}</td>
+                      <td className="px-4 py-2.5 text-right text-slate-600">{fmt(c.clicks ?? 0)}</td>
                       <td className={clsx('px-4 py-2.5 text-right font-bold',
-                        c.roas >= 5 ? 'text-green-600' : c.roas >= 3 ? 'text-amber-600' : 'text-red-600'
+                        rVal >= 5 ? 'text-green-600' : rVal >= 3 ? 'text-amber-600' : 'text-red-600'
                       )}>
-                        {fmt(c.roas, 2)}×
+                        {fmt(rVal, 2)}×
+                      </td>
+                      <td className={clsx('px-4 py-2.5 text-right font-semibold', acosColor(c.acos))}>
+                        {c.acos != null ? `${fmt(c.acos, 1)}%` : '—'}
                       </td>
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-2">
@@ -963,13 +1020,13 @@ function CampaignSection({ analysis }: { analysis: BolAnalysis | null }) {
                               className={clsx('h-full rounded-full transition-all',
                                 capping ? 'bg-amber-400' : 'bg-blue-400'
                               )}
-                              style={{ width: `${Math.min(c.budget_utilisation_pct, 100)}%` }}
+                              style={{ width: `${Math.min(budgetUtil, 100)}%` }}
                             />
                           </div>
                           <span className={clsx('text-[10px] font-semibold w-8 text-right',
                             capping ? 'text-amber-600' : 'text-slate-500'
                           )}>
-                            {Math.round(c.budget_utilisation_pct)}%
+                            {Math.round(budgetUtil)}%
                           </span>
                         </div>
                       </td>
@@ -981,6 +1038,62 @@ function CampaignSection({ analysis }: { analysis: BolAnalysis | null }) {
           </div>
         </div>
       )}
+
+      {/* Keyword performance — from bol_keyword_performance */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-800">Keyword Performance</h3>
+          <p className="text-xs text-slate-400 mt-0.5">Top 20 by spend · ACOS: green ≤20%, amber ≤40%, red &gt;40%</p>
+        </div>
+        {keywords.length === 0 ? (
+          <p className="px-4 py-4 text-xs text-slate-400">
+            No keyword data yet. Run a sync with advertising credentials to populate.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="px-4 py-2 text-left font-semibold text-slate-500">Keyword</th>
+                  <th className="px-4 py-2 text-center font-semibold text-slate-500">Match</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">Bid</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">Spend</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">Clicks</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">ACOS</th>
+                  <th className="px-4 py-2 text-right font-semibold text-slate-500">Conv.</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {keywords.map((k, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-4 py-2.5 text-slate-700">
+                      {k.keyword_text ?? <span className="text-slate-400 italic">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      {k.match_type ? (
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600">
+                          {k.match_type}
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-slate-600">
+                      {k.bid != null ? `€${fmt(k.bid, 2)}` : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-medium text-slate-800">
+                      {k.spend != null ? `€${fmt(k.spend, 2)}` : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-slate-600">{fmt(k.clicks ?? 0)}</td>
+                    <td className={clsx('px-4 py-2.5 text-right font-semibold', acosColor(k.acos))}>
+                      {k.acos != null ? `${fmt(k.acos, 1)}%` : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-slate-600">{k.conversions ?? 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       <RecList recs={analysis.recommendations ?? []} />
     </div>
@@ -1614,7 +1727,7 @@ export default function BolDashboard() {
               {activeSection === 'products'        && <ProductsSection analysis={summary.content} bolCustomerId={bolCustomerId} />}
               {activeSection === 'inventory'       && <InventorySection analysis={summary.inventory} />}
               {activeSection === 'orders'          && <OrdersSection analysis={summary.orders} />}
-              {activeSection === 'campaigns'       && <CampaignSection analysis={summary.advertising} />}
+              {activeSection === 'campaigns'       && <CampaignSection analysis={summary.advertising} bolCustomerId={bolCustomerId} />}
               {activeSection === 'returns'         && <ReturnsSection analysis={summary.returns} />}
               {activeSection === 'competitors'     && bolCustomerId && (
                 <CompetitorSection bolCustomerId={bolCustomerId} />
