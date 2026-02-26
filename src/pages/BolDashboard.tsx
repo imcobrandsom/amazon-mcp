@@ -23,7 +23,13 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import { getBolSummaryForClient, getBolCompetitorsForClient, getBolKeywordsForClient } from '../lib/bol-api';
+import {
+  getBolSummaryForClient,
+  getBolCompetitorsForClient,
+  getBolKeywordsForClient,
+  triggerSync,
+  type BolSyncType,
+} from '../lib/bol-api';
 import type {
   BolCustomerAnalysisSummary,
   BolAnalysis,
@@ -1122,6 +1128,155 @@ function ReturnsSection({ analysis }: { analysis: BolAnalysis | null }) {
   );
 }
 
+// ── Sync Panel ─────────────────────────────────────────────────────────────────
+
+type PhaseStatus = 'idle' | 'running' | 'success' | 'error' | 'pending';
+interface PhaseState { status: PhaseStatus; message: string }
+
+function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
+  const [phases, setPhases] = useState<Record<BolSyncType, PhaseState>>({
+    main:     { status: 'idle', message: '' },
+    complete: { status: 'idle', message: '' },
+    extended: { status: 'idle', message: '' },
+  });
+  const [runningAll, setRunningAll] = useState(false);
+
+  const setPhase = (phase: BolSyncType, state: PhaseState) =>
+    setPhases(prev => ({ ...prev, [phase]: state }));
+
+  const runPhase = async (phase: BolSyncType): Promise<PhaseStatus> => {
+    setPhase(phase, { status: 'running', message: '' });
+    try {
+      const result = await triggerSync(bolCustomerId, phase);
+      let finalStatus: PhaseStatus = 'success';
+      let message = '';
+
+      if (phase === 'main') {
+        const ok: string[] = [];
+        if (result.inventory?.status   === 'ok') ok.push('Inv');
+        if (result.orders?.status      === 'ok') ok.push('Orders');
+        if (result.advertising?.status === 'ok') ok.push('Ads');
+        if (result.returns?.status     === 'ok') ok.push('Returns');
+        if (result.offers_export?.status === 'job_submitted') ok.push('Export queued');
+        message = ok.join(' · ') || 'Done';
+      } else if (phase === 'complete') {
+        const sp = result.still_pending ?? 0;
+        const c  = result.completed ?? 0;
+        if (sp > 0) {
+          finalStatus = 'pending';
+          message = `${c} done · ${sp} still waiting`;
+        } else if (c === 0 && (result.checked ?? 0) === 0) {
+          message = 'No pending jobs';
+        } else {
+          message = `${c} export${c !== 1 ? 's' : ''} processed`;
+        }
+      } else {
+        // extended
+        const d = result.detail ?? {};
+        message = [d.competitors, d.rankings, d.catalog].filter(Boolean).join(' · ') || 'Done';
+        if (result.message) { finalStatus = 'pending'; message = result.message; }
+      }
+
+      setPhase(phase, { status: finalStatus, message });
+      return finalStatus;
+    } catch (e) {
+      const msg = (e as Error).message;
+      setPhase(phase, { status: 'error', message: msg });
+      return 'error';
+    }
+  };
+
+  const runAll = async () => {
+    setRunningAll(true);
+    try {
+      await runPhase('main');
+      // Brief wait — bol.com takes a few seconds to queue the export
+      await new Promise<void>(r => setTimeout(r, 8000));
+      const firstCompleteStatus = await runPhase('complete');
+      if (firstCompleteStatus === 'pending') {
+        // Export not ready yet — wait 40 s and try once more
+        await new Promise<void>(r => setTimeout(r, 40000));
+        await runPhase('complete');
+      }
+      await runPhase('extended');
+    } finally {
+      setRunningAll(false);
+    }
+  };
+
+  const PHASES: Array<{ id: BolSyncType; label: string; sub: string }> = [
+    { id: 'main',     label: '1. Main Sync',     sub: 'Inventory · Orders · Ads' },
+    { id: 'complete', label: '2. Process Offers', sub: 'CSV download + analysis' },
+    { id: 'extended', label: '3. Extended Data',  sub: 'Competitors · Keywords'  },
+  ];
+
+  const isAnyRunning = Object.values(phases).some(p => p.status === 'running') || runningAll;
+
+  const phaseIcon = (s: PhaseStatus, isRunning: boolean) => {
+    if (isRunning) return <RefreshCw size={11} className="animate-spin flex-shrink-0 mt-0.5" />;
+    if (s === 'success') return <CheckCircle2 size={11} className="flex-shrink-0 mt-0.5" />;
+    if (s === 'error')   return <XCircle      size={11} className="flex-shrink-0 mt-0.5" />;
+    if (s === 'pending') return <Clock        size={11} className="flex-shrink-0 mt-0.5" />;
+    return <div className="w-2.5 h-2.5 rounded-full border border-current flex-shrink-0 mt-0.5" />;
+  };
+
+  const phaseClass = (s: PhaseStatus, isRunning: boolean) => clsx(
+    'w-full flex items-start gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors disabled:cursor-not-allowed',
+    isRunning          ? 'bg-blue-50 text-blue-700' :
+    s === 'success'    ? 'bg-green-50 text-green-700' :
+    s === 'error'      ? 'bg-red-50 text-red-600' :
+    s === 'pending'    ? 'bg-amber-50 text-amber-700' :
+    'bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+  );
+
+  return (
+    <div className="p-3 border-t border-slate-100 flex-shrink-0">
+      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2 px-0.5">
+        Data Sync
+      </p>
+      <div className="space-y-1">
+        {PHASES.map(({ id, label, sub }) => {
+          const ph = phases[id];
+          const running = ph.status === 'running';
+          return (
+            <button
+              key={id}
+              onClick={() => !isAnyRunning && runPhase(id)}
+              disabled={isAnyRunning}
+              className={phaseClass(ph.status, running)}
+            >
+              {phaseIcon(ph.status, running)}
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold leading-tight truncate">{label}</p>
+                <p className="text-[10px] leading-tight mt-0.5 truncate opacity-70">
+                  {ph.message || sub}
+                </p>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <button
+        onClick={runAll}
+        disabled={isAnyRunning}
+        className={clsx(
+          'mt-2 w-full py-1.5 px-3 rounded-lg text-[11px] font-semibold transition-colors',
+          isAnyRunning
+            ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+            : 'bg-orange-500 text-white hover:bg-orange-600',
+        )}
+      >
+        {runningAll
+          ? <span className="flex items-center justify-center gap-1.5">
+              <RefreshCw size={10} className="animate-spin" /> Running…
+            </span>
+          : '▶ Run All'
+        }
+      </button>
+    </div>
+  );
+}
+
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
 
 const NAV_ITEMS: {
@@ -1225,6 +1380,11 @@ export default function BolDashboard() {
               </button>
             ))}
           </nav>
+
+          {/* Sync Panel */}
+          {!loading && summary && bolCustomerId && (
+            <SyncPanel bolCustomerId={bolCustomerId} />
+          )}
         </div>
 
         {/* Main content */}

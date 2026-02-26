@@ -9,6 +9,7 @@ import type {
   BolCompetitorSnapshot,
   BolKeywordRanking,
 } from '../types/bol';
+import { supabase } from './supabase';
 
 const BASE = '/api';
 
@@ -132,4 +133,59 @@ export async function getBolKeywordsForClient(
   customerId: string
 ): Promise<{ rankings: BolKeywordRanking[]; count: number }> {
   return apiFetch(`/bol-keywords?customerId=${customerId}`);
+}
+
+// ── Dashboard-initiated sync ──────────────────────────────────────────────────
+
+export type BolSyncType = 'main' | 'complete' | 'extended';
+
+export interface BolSyncResult {
+  customer_id?: string;
+  seller_name?: string;
+  started_at?: string;
+  duration_ms?: number;
+  // main
+  offers_export?: { status: string; process_status_id?: string; note?: string; error?: string };
+  inventory?:     { status: string; items?: number;     score?: number; error?: string };
+  orders?:        { status: string; count?: number;     score?: number; error?: string };
+  advertising?:   { status: string; campaigns?: number; score?: number; note?: string; error?: string };
+  returns?:       { status: string; open?: number; handled?: number; score?: number; error?: string };
+  performance?:   { status: string; indicators?: number; score?: number; error?: string };
+  // complete
+  checked?: number;
+  completed?: number;
+  still_pending?: number;
+  results?: Array<{ jobId: string; status: string; detail: string }>;
+  // extended
+  detail?: { competitors?: string; rankings?: string; catalog?: string };
+  // common
+  error?: string;
+  message?: string;
+}
+
+/**
+ * Trigger a sync phase from the dashboard UI.
+ * Uses the current Supabase session JWT for auth.
+ */
+export async function triggerSync(
+  customerId: string,
+  syncType: BolSyncType,
+): Promise<BolSyncResult> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error('Not authenticated — please sign in again');
+  }
+
+  const res = await fetch(`${BASE}/bol-sync-trigger`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ customerId, syncType }),
+  });
+
+  const data = await res.json() as BolSyncResult;
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
 }
