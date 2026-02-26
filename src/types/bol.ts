@@ -60,6 +60,21 @@ export interface BolCustomerAnalysisSummary {
   last_sync_at: string | null;
 }
 
+// ── Product (joined inventory + listings) ─────────────────────────────────────
+
+export interface BolProduct {
+  ean: string;
+  bsku: string | null;
+  title: string | null;
+  gradedStock: number;
+  regularStock: number;
+  offerId: string | null;
+  price: number | null;
+  fulfilmentType: 'FBB' | 'FBR' | null;
+  stockAmount: number | null;
+  onHold: boolean;
+}
+
 // ── Competitor snapshot ───────────────────────────────────────────────────────
 
 export interface BolCompetitorSnapshot {

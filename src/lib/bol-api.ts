@@ -8,6 +8,7 @@ import type {
   BolCustomerAnalysisSummary,
   BolCompetitorSnapshot,
   BolKeywordRanking,
+  BolProduct,
 } from '../types/bol';
 import { supabase } from './supabase';
 
@@ -117,6 +118,12 @@ export async function getBolSummaryForClient(clientId: string): Promise<BolCusto
     overall_score: overall,
     last_sync_at: customer.last_sync_at,
   };
+}
+
+// ── Products (inventory + listings join) ──────────────────────────────────────
+
+export function getBolProducts(customerId: string): Promise<{ products: BolProduct[] }> {
+  return apiFetch(`/bol-products?customerId=${customerId}`);
 }
 
 // ── Competitor data ───────────────────────────────────────────────────────────

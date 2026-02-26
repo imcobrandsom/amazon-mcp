@@ -27,6 +27,7 @@ import {
   getBolSummaryForClient,
   getBolCompetitorsForClient,
   getBolKeywordsForClient,
+  getBolProducts,
   triggerSync,
   type BolSyncType,
 } from '../lib/bol-api';
@@ -36,6 +37,7 @@ import type {
   BolRecommendation,
   BolCompetitorSnapshot,
   BolKeywordRanking,
+  BolProduct,
 } from '../types/bol';
 import clsx from 'clsx';
 
@@ -365,10 +367,59 @@ function RecommendationsSection({ summary }: { summary: BolCustomerAnalysisSumma
 
 // ── Products Section ───────────────────────────────────────────────────────────
 
-function ProductsSection({ analysis }: { analysis: BolAnalysis | null }) {
-  if (!analysis) return <SyncPending section="content" />;
+type SortKey = 'title' | 'ean' | 'regularStock' | 'price' | null;
+type SortDir = 'asc' | 'desc';
 
-  const f = analysis.findings as {
+function ProductsSection({
+  analysis,
+  bolCustomerId,
+}: {
+  analysis: BolAnalysis | null;
+  bolCustomerId: string;
+}) {
+  const [products, setProducts]     = useState<BolProduct[] | null>(null);
+  const [prodError, setProdError]   = useState<string | null>(null);
+  const [search, setSearch]         = useState('');
+  const [sortKey, setSortKey]       = useState<SortKey>('regularStock');
+  const [sortDir, setSortDir]       = useState<SortDir>('asc');
+
+  useEffect(() => {
+    if (!bolCustomerId) return;
+    getBolProducts(bolCustomerId)
+      .then(r => setProducts(r.products))
+      .catch(e => setProdError(e.message ?? 'Failed to load products'));
+  }, [bolCustomerId]);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
+  const filtered = (products ?? []).filter(p => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (p.title ?? '').toLowerCase().includes(q) || p.ean.includes(q);
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    if (!sortKey) return 0;
+    let va: string | number | null;
+    let vb: string | number | null;
+    if (sortKey === 'title')        { va = a.title ?? ''; vb = b.title ?? ''; }
+    else if (sortKey === 'ean')     { va = a.ean;         vb = b.ean; }
+    else if (sortKey === 'price')   { va = a.price ?? -1; vb = b.price ?? -1; }
+    else                            { va = a.regularStock; vb = b.regularStock; }
+    if (va < vb) return sortDir === 'asc' ? -1 : 1;
+    if (va > vb) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  // ── aggregate stats from analysis findings ──
+  const f = (analysis?.findings ?? {}) as {
     offers_count?: number;
     avg_title_score?: number;
     titles_in_range?: number;
@@ -388,17 +439,24 @@ function ProductsSection({ analysis }: { analysis: BolAnalysis | null }) {
     }>;
   };
 
-  const total    = f.offers_count ?? 0;
-  const inRange  = f.titles_in_range ?? 0;
-  const short    = f.titles_short    ?? 0;
-  const missing  = f.titles_missing  ?? 0;
+  const total      = f.offers_count ?? 0;
+  const inRange    = f.titles_in_range ?? 0;
+  const short      = f.titles_short    ?? 0;
+  const missing    = f.titles_missing  ?? 0;
   const inRangePct = total > 0 ? Math.round((inRange / total) * 100) : 0;
 
-  const hasInsights = (f.per_offer_insights?.length ?? 0) > 0;
+  const hasInsights   = (f.per_offer_insights?.length ?? 0) > 0;
   const sortedInsights = [...(f.per_offer_insights ?? [])].sort((a, b) => b.visits - a.visits);
 
   const buyBoxColor = (pct: number) =>
     pct >= 80 ? 'text-green-600' : pct >= 50 ? 'text-amber-600' : 'text-red-600';
+
+  const SortArrow = ({ col }: { col: SortKey }) =>
+    sortKey !== col ? null : (
+      <span className="ml-0.5 text-slate-400">{sortDir === 'asc' ? '↑' : '↓'}</span>
+    );
+
+  if (!analysis) return <SyncPending section="content" />;
 
   return (
     <div className="space-y-4">
@@ -519,6 +577,123 @@ function ProductsSection({ analysis }: { analysis: BolAnalysis | null }) {
           </div>
         </div>
       )}
+
+      {/* All products table */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800">All products</h3>
+            <p className="text-xs text-slate-400 mt-0.5">From latest inventory + listings sync</p>
+          </div>
+          <input
+            type="text"
+            placeholder="Search title or EAN…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 w-52 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+          />
+        </div>
+
+        {prodError && (
+          <p className="px-4 py-3 text-xs text-red-600">{prodError}</p>
+        )}
+
+        {!products && !prodError && (
+          <p className="px-4 py-4 text-xs text-slate-400">Loading products…</p>
+        )}
+
+        {products && products.length === 0 && (
+          <p className="px-4 py-4 text-xs text-slate-400">
+            No products found. Run a sync to populate this list.
+          </p>
+        )}
+
+        {sorted.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th
+                    className="px-4 py-2 text-left font-semibold text-slate-500 cursor-pointer select-none hover:text-slate-700"
+                    onClick={() => handleSort('title')}
+                  >
+                    Title <SortArrow col="title" />
+                  </th>
+                  <th
+                    className="px-4 py-2 text-left font-semibold text-slate-500 cursor-pointer select-none hover:text-slate-700"
+                    onClick={() => handleSort('ean')}
+                  >
+                    EAN <SortArrow col="ean" />
+                  </th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-500">bSKU</th>
+                  <th className="px-4 py-2 text-center font-semibold text-slate-500">Type</th>
+                  <th
+                    className="px-4 py-2 text-right font-semibold text-slate-500 cursor-pointer select-none hover:text-slate-700"
+                    onClick={() => handleSort('price')}
+                  >
+                    Price <SortArrow col="price" />
+                  </th>
+                  <th
+                    className="px-4 py-2 text-right font-semibold text-slate-500 cursor-pointer select-none hover:text-slate-700"
+                    onClick={() => handleSort('regularStock')}
+                  >
+                    Stock <SortArrow col="regularStock" />
+                  </th>
+                  <th className="px-4 py-2 text-center font-semibold text-slate-500">Hold</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {sorted.map((p, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-4 py-2.5 text-slate-700 max-w-xs">
+                      <span className="block truncate" title={p.title ?? undefined}>
+                        {p.title ? p.title.slice(0, 60) + (p.title.length > 60 ? '…' : '') : <span className="text-slate-400 italic">—</span>}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-500 font-mono">{p.ean}</td>
+                    <td className="px-4 py-2.5 text-slate-500">{p.bsku ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      {p.fulfilmentType ? (
+                        <span className={clsx(
+                          'inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold',
+                          p.fulfilmentType === 'FBB'
+                            ? 'bg-blue-100 text-blue-700'
+                            : 'bg-slate-100 text-slate-600'
+                        )}>
+                          {p.fulfilmentType}
+                        </span>
+                      ) : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-slate-700 font-medium">
+                      {p.price != null ? `€ ${p.price.toFixed(2)}` : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <span className={clsx(
+                        'font-semibold',
+                        p.regularStock === 0 ? 'text-red-600' : p.regularStock <= 3 ? 'text-amber-600' : 'text-slate-700'
+                      )}>
+                        {p.regularStock}
+                      </span>
+                      {p.gradedStock > 0 && (
+                        <span className="text-slate-400 ml-1">(+{p.gradedStock})</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      {p.onHold ? (
+                        <span className="inline-block w-2 h-2 rounded-full bg-red-500" title="On hold by retailer" />
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {products && sorted.length === 0 && search && (
+          <p className="px-4 py-3 text-xs text-slate-400">No products match "{search}"</p>
+        )}
+      </div>
 
       <RecList recs={analysis.recommendations ?? []} />
     </div>
@@ -1436,7 +1611,7 @@ export default function BolDashboard() {
 
               {activeSection === 'overview'        && <OverviewSection summary={summary} />}
               {activeSection === 'recommendations' && <RecommendationsSection summary={summary} />}
-              {activeSection === 'products'        && <ProductsSection analysis={summary.content} />}
+              {activeSection === 'products'        && <ProductsSection analysis={summary.content} bolCustomerId={bolCustomerId} />}
               {activeSection === 'inventory'       && <InventorySection analysis={summary.inventory} />}
               {activeSection === 'orders'          && <OrdersSection analysis={summary.orders} />}
               {activeSection === 'campaigns'       && <CampaignSection analysis={summary.advertising} />}
