@@ -120,12 +120,14 @@ function CircleScore({ score, size = 'sm' }: { score: number | null; size?: 'sm'
   );
 }
 
-function SyncPending() {
+function SyncPending({ section }: { section?: string } = {}) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <RefreshCw size={24} className="text-slate-300 mb-3" />
-      <p className="text-sm font-medium text-slate-500">No data yet</p>
-      <p className="text-xs text-slate-400 mt-1">Data will appear after the next sync.</p>
+      <p className="text-sm font-medium text-slate-500">
+        No {section ? `${section} ` : ''}data yet
+      </p>
+      <p className="text-xs text-slate-400 mt-1">Run Phase 1 in the sync panel below to import from bol.com.</p>
     </div>
   );
 }
@@ -364,7 +366,7 @@ function RecommendationsSection({ summary }: { summary: BolCustomerAnalysisSumma
 // ── Products Section ───────────────────────────────────────────────────────────
 
 function ProductsSection({ analysis }: { analysis: BolAnalysis | null }) {
-  if (!analysis) return <SyncPending />;
+  if (!analysis) return <SyncPending section="content" />;
 
   const f = analysis.findings as {
     offers_count?: number;
@@ -526,7 +528,7 @@ function ProductsSection({ analysis }: { analysis: BolAnalysis | null }) {
 // ── Inventory Section ──────────────────────────────────────────────────────────
 
 function InventorySection({ analysis }: { analysis: BolAnalysis | null }) {
-  if (!analysis) return <SyncPending />;
+  if (!analysis) return <SyncPending section="inventory" />;
 
   const f = analysis.findings as {
     items_count?: number;
@@ -616,7 +618,7 @@ function InventorySection({ analysis }: { analysis: BolAnalysis | null }) {
 // ── Orders Section ─────────────────────────────────────────────────────────────
 
 function OrdersSection({ analysis }: { analysis: BolAnalysis | null }) {
-  if (!analysis) return <SyncPending />;
+  if (!analysis) return <SyncPending section="orders" />;
 
   const f = analysis.findings as {
     orders_count?: number;
@@ -686,7 +688,7 @@ function OrdersSection({ analysis }: { analysis: BolAnalysis | null }) {
 // ── Campaign Section ───────────────────────────────────────────────────────────
 
 function CampaignSection({ analysis }: { analysis: BolAnalysis | null }) {
-  if (!analysis) return <SyncPending />;
+  if (!analysis) return <SyncPending section="campaign" />;
 
   type CampaignRow = {
     id: string;
@@ -834,7 +836,7 @@ function CompetitorSection({ bolCustomerId }: { bolCustomerId: string }) {
     );
   }
 
-  if (!competitors?.length) return <SyncPending />;
+  if (!competitors?.length) return <SyncPending section="competitor" />;
 
   const buyBoxWins = competitors.filter(c => c.buy_box_winner).length;
   const winRate    = Math.round((buyBoxWins / competitors.length) * 100);
@@ -959,7 +961,7 @@ function KeywordsSection({ bolCustomerId }: { bolCustomerId: string }) {
     );
   }
 
-  if (!rankings?.length) return <SyncPending />;
+  if (!rankings?.length) return <SyncPending section="keyword" />;
 
   const searchRankings = rankings.filter(r => r.search_type === 'SEARCH');
   const browseRankings = rankings.filter(r => r.search_type === 'BROWSE');
@@ -1066,7 +1068,7 @@ function KeywordsSection({ bolCustomerId }: { bolCustomerId: string }) {
 // ── Returns Section ────────────────────────────────────────────────────────────
 
 function ReturnsSection({ analysis }: { analysis: BolAnalysis | null }) {
-  if (!analysis) return <SyncPending />;
+  if (!analysis) return <SyncPending section="returns" />;
 
   const f = analysis.findings as {
     open_count?: number;
@@ -1152,13 +1154,35 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
       let message = '';
 
       if (phase === 'main') {
-        const ok: string[] = [];
-        if (result.inventory?.status   === 'ok') ok.push('Inv');
-        if (result.orders?.status      === 'ok') ok.push('Orders');
-        if (result.advertising?.status === 'ok') ok.push('Ads');
-        if (result.returns?.status     === 'ok') ok.push('Returns');
-        if (result.offers_export?.status === 'job_submitted') ok.push('Export queued');
-        message = ok.join(' · ') || 'Done';
+        const parts: string[] = [];
+        const inv = result.inventory;
+        const ord = result.orders;
+        const ads = result.advertising;
+        const ret = result.returns;
+        const exp = result.offers_export;
+        const prf = result.performance;
+
+        if (inv?.status === 'ok')        parts.push(`✅ Inv (${inv.items ?? 0})`);
+        else if (inv?.status === 'failed') parts.push(`❌ Inv`);
+
+        if (ord?.status === 'ok')        parts.push(`✅ Orders (${ord.count ?? 0})`);
+        else if (ord?.status === 'failed') parts.push(`❌ Orders`);
+
+        if (ret?.status === 'ok')        parts.push(`✅ Returns`);
+        else if (ret?.status === 'failed') parts.push(`❌ Returns`);
+
+        if (ads?.status === 'ok')           parts.push(`✅ Ads`);
+        else if (ads?.status === 'skipped') parts.push(`⚠️ Ads (no creds)`);
+        else if (ads?.status === 'failed')  parts.push(`❌ Ads: ${ads.error ?? 'failed'}`);
+
+        if (prf?.status === 'ok')         parts.push(`✅ Perf`);
+        else if (prf?.status === 'no_data') parts.push(`⚠️ Perf (no data this week)`);
+
+        if (exp?.status === 'job_submitted') parts.push(`⏳ Content export queued → run Phase 2`);
+        else if (exp?.status === 'failed')   parts.push(`❌ Content export failed`);
+
+        message = parts.join('\n') || 'Done';
+        if (parts.some(p => p.startsWith('❌'))) finalStatus = 'error';
       } else if (phase === 'complete') {
         const sp = result.still_pending ?? 0;
         const c  = result.completed ?? 0;
@@ -1248,7 +1272,7 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
               {phaseIcon(ph.status, running)}
               <div className="min-w-0 flex-1">
                 <p className="text-[11px] font-semibold leading-tight truncate">{label}</p>
-                <p className="text-[10px] leading-tight mt-0.5 truncate opacity-70">
+                <p className="text-[10px] leading-tight mt-0.5 whitespace-pre-wrap opacity-70">
                   {ph.message || sub}
                 </p>
               </div>
@@ -1306,7 +1330,10 @@ export default function BolDashboard() {
     setLoading(true);
     getBolSummaryForClient(clientId)
       .then(setSummary)
-      .catch(() => setSummary(null))
+      .catch((err) => {
+        console.error('[BolDashboard] getBolSummaryForClient failed:', err);
+        setSummary(null);
+      })
       .finally(() => setLoading(false));
   }, [clientId]);
 

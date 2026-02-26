@@ -239,7 +239,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           });
           detail.performance = `${indicators.length} indicators, score ${analysis.score}`;
         } else {
-          detail.performance = 'no indicators returned';
+          // Store a placeholder so the dashboard doesn't show a spinner forever
+          await supabase.from('bol_analyses').insert({
+            bol_customer_id: customer.id,
+            snapshot_id:     null,
+            category:        'performance',
+            score:           100,
+            findings:        { indicators_count: 0, at_risk_count: 0, needs_improvement: 0, indicators: [], message: 'No performance data available for current week' },
+            recommendations: [],
+          });
+          detail.performance = 'no indicators returned — placeholder stored';
         }
       } catch (e) {
         detail.performance = `FAILED: ${(e as Error).message}`;

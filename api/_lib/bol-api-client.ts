@@ -49,13 +49,20 @@ export async function getAdsToken(adsClientId: string, adsClientSecret: string):
   if (cached && Date.now() < cached.expiresAt) return cached.token;
 
   const credentials = Buffer.from(`${adsClientId}:${adsClientSecret}`).toString('base64');
-  const res = await fetch(BOL_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
-  });
+  let res: Response;
+  try {
+    res = await fetch(BOL_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' },
+    });
+  } catch (networkErr) {
+    console.error(`[getAdsToken] Network error reaching ${BOL_TOKEN_URL}:`, networkErr);
+    throw new Error(`Bol.com Ads token fetch failed (network error): ${(networkErr as Error).message}`);
+  }
 
   if (!res.ok) {
     const body = await res.text();
+    console.error(`[getAdsToken] OAuth failed — URL: ${BOL_TOKEN_URL}, status: ${res.status}, body: ${body}`);
     throw new Error(`Bol.com Ads OAuth failed (${res.status}): ${body}`);
   }
 

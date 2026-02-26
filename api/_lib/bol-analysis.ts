@@ -494,6 +494,7 @@ export function analyzeReturns(openReturns: unknown[], handledReturns: unknown[]
   return {
     score: Math.max(0, score),
     findings: {
+      total_count:    totalOpen + totalHandled,
       open_count:     totalOpen,
       handled_count:  totalHandled,
       top_reasons:    topReasons,
