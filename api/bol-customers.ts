@@ -1,6 +1,6 @@
 /**
  * POST   /api/bol-customers        — create a bol.com customer
- * GET    /api/bol-customers        — list all (secret redacted)
+ * GET    /api/bol-customers        — list all (secrets redacted)
  * PATCH  /api/bol-customers        — update (link client_id, toggle active, etc.)
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
