@@ -359,7 +359,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }).eq('id', jobId);
           results.push({ jobId, status: 'failed', detail: 'Bol.com reported FAILURE' });
         } else {
-          results.push({ jobId, status: 'pending', detail: `bol.com status: ${status} — not ready yet` });
+          results.push({ jobId, status: 'pending', detail: `bol.com status: ${status} — export not ready yet. Bol.com typically takes 2–5 minutes to generate the file. Run Phase 2 again shortly.` });
         }
       } catch (err) {
         results.push({ jobId, status: 'error', detail: (err as Error).message });

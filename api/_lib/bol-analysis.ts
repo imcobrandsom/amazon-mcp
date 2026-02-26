@@ -315,7 +315,8 @@ interface AdsCampaign {
   campaignId?: string;
   name?: string;
   status?: string;
-  dailyBudget?: number;
+  dailyBudget?: number;          // flat (old API versions)
+  budget?: { dailyBudget?: number }; // nested (current API)
 }
 
 interface AdsPerformanceRow {
@@ -323,7 +324,8 @@ interface AdsPerformanceRow {
   spend?: number;
   impressions?: number;
   clicks?: number;
-  conversions?: number;
+  conversions?: number; // some API versions
+  orders?: number;      // bol.com Advertising API v1 uses "orders"
   revenue?: number;
 }
 
@@ -350,14 +352,15 @@ export function analyzeAdvertising(
 
   const perCampaign: Array<{
     id: string; name: string; spend: number; impressions: number;
-    clicks: number; ctr: number; conversions: number; roas: number; budgetUsedPct: number;
+    clicks: number; ctr: number; conversions: number; roas: number; budget_utilisation_pct: number;
   }> = [];
 
   for (const row of perf) {
     const spend       = row.spend       ?? 0;
     const impressions = row.impressions ?? 0;
     const clicks      = row.clicks      ?? 0;
-    const conversions = row.conversions ?? 0;
+    // bol.com Advertising API v1 uses "orders"; older versions use "conversions"
+    const conversions = row.conversions ?? row.orders ?? 0;
     const revenue     = row.revenue     ?? 0;
 
     totalSpend       += spend;
@@ -367,9 +370,10 @@ export function analyzeAdvertising(
     totalRevenue     += revenue;
 
     const campaign    = cMap.get(row.campaignId ?? '');
-    const dailyBudget = campaign?.dailyBudget ?? 0;
+    // bol.com Advertising API v1 nests daily budget: campaign.budget.dailyBudget
+    const dailyBudget = campaign?.dailyBudget ?? campaign?.budget?.dailyBudget ?? 0;
     // Estimate budget utilisation: spend vs 30-day budget
-    const budgetUsedPct = dailyBudget > 0 ? Math.min(100, Math.round((spend / (dailyBudget * 30)) * 100)) : 0;
+    const budget_utilisation_pct = dailyBudget > 0 ? Math.min(100, Math.round((spend / (dailyBudget * 30)) * 100)) : 0;
 
     perCampaign.push({
       id:            row.campaignId ?? '',
@@ -380,7 +384,7 @@ export function analyzeAdvertising(
       ctr:           impressions > 0 ? Math.round((clicks / impressions) * 10000) / 100 : 0,
       conversions,
       roas:          spend > 0 ? Math.round((revenue / spend) * 100) / 100 : 0,
-      budgetUsedPct,
+      budget_utilisation_pct,
     });
   }
 
@@ -431,6 +435,9 @@ export function analyzeAdvertising(
       total_impressions:  totalImpressions,
       total_clicks:       totalClicks,
       total_conversions:  totalConversions,
+      conversion_rate_pct: totalClicks > 0
+        ? Math.round((totalConversions / totalClicks) * 10000) / 100
+        : 0,
       ctr_pct:            overallCtr,
       roas:               overallRoas,
       per_campaign:       perCampaign,

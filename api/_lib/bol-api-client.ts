@@ -67,8 +67,21 @@ export async function getAdsToken(adsClientId: string, adsClientSecret: string):
   return data.access_token;
 }
 
-// ── Simple CSV parser (handles quoted fields) ─────────────────────────────────
+// ── Simple CSV parser (handles quoted fields, auto-detects delimiter) ──────────
+
+/** Detect the most-common delimiter character in a CSV header line */
+function detectDelimiter(firstLine: string): string {
+  const counts: Record<string, number> = { ',': 0, ';': 0, '\t': 0 };
+  for (const ch of firstLine) if (ch in counts) counts[ch]++;
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+}
+
 function parseCSV(csv: string): Record<string, string>[] {
+  // Auto-detect delimiter from first line (bol.com may use ; or \t for Dutch locales)
+  const firstNewline = csv.indexOf('\n');
+  const firstLine    = firstNewline > 0 ? csv.slice(0, firstNewline) : csv;
+  const SEP          = detectDelimiter(firstLine);
+
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';
@@ -79,7 +92,7 @@ function parseCSV(csv: string): Record<string, string>[] {
     if (ch === '"') {
       if (inQuotes && csv[i + 1] === '"') { field += '"'; i++; }
       else inQuotes = !inQuotes;
-    } else if (ch === ',' && !inQuotes) {
+    } else if (ch === SEP && !inQuotes) {
       row.push(field); field = '';
     } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
       if (ch === '\r' && csv[i + 1] === '\n') i++;
@@ -168,7 +181,7 @@ export async function getInventory(token: string): Promise<unknown[]> {
   let page = 1;
 
   while (true) {
-    const res = await bolFetch(token, `/retailer/inventory?page=${page}`);
+    const res = await bolFetch(token, `/retailer/inventory?fulfilment-method=ALL&page=${page}`);
     if (!res.ok) break;
     const d = res.data as { inventory?: unknown[] };
     const items = d.inventory ?? [];
