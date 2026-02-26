@@ -43,7 +43,9 @@ export function analyzeContent(
   ];
 
   for (const offer of offers) {
-    const title = offer['title'] ?? offer['Title'] ?? '';
+    // bol.com offers export CSV does NOT include product titles for catalog products.
+    // 'unknown-product-title' only applies to EANs not yet in the bol.com catalog.
+    const title = offer['title'] ?? offer['Title'] ?? offer['unknown-product-title'] ?? '';
     const len = title.length;
 
     // Title scoring: 150–175 chars = 100, exists but wrong length = 65, missing = 0
@@ -52,24 +54,34 @@ export function analyzeContent(
     else if (len > 175) titleScores.push(80); // too long but fixable
     else titleScores.push(0);
 
-    const price = parseFloat(offer['price'] ?? offer['Price'] ?? '0');
-    priceSet.push(price > 0);
+    // bol.com v10 offers export: price column is 'price'; fall back to 'unit-price'
+    const priceRaw = offer['price'] ?? offer['unit-price'] ?? offer['Price'] ?? '';
+    // Handle Dutch decimal format (comma) and strip any currency symbol
+    const priceNorm = priceRaw.replace(/[€$£\s]/g, '').replace(',', '.');
+    const price = parseFloat(priceNorm);
+    priceSet.push(!isNaN(price) && price > 0);
   }
 
-  const avgTitleScore = avg(titleScores);
+  // When ALL titles are missing it means the offers export doesn't include title data
+  // (normal for bol.com LVB/FBB sellers — catalog titles are managed by bol.com).
+  // In that case skip title scoring to avoid artificially low scores.
+  const missingTitles   = titleScores.filter(s => s === 0).length;
+  const shortTitles     = titleScores.filter(s => s === 65).length;
+  const allTitlesMissing = missingTitles === offers.length;
+
+  const avgTitleScore = allTitlesMissing ? 50 : avg(titleScores);
   const priceSetPct   = priceSet.filter(Boolean).length / priceSet.length;
   const score         = Math.round(avgTitleScore * 0.7 + priceSetPct * 100 * 0.3);
 
   const recs: AnalysisResult['recommendations'] = [];
-  const shortTitles = titleScores.filter(s => s === 65).length;
-  const missingTitles = titleScores.filter(s => s === 0).length;
 
-  if (missingTitles > 0)
+  // Only raise title recommendations when some (not all) titles are present but incomplete
+  if (!allTitlesMissing && missingTitles > 0)
     recs.push({ priority: 'high', title: 'Missing product titles',
       action: `${missingTitles} offer(s) have no title. Add a Dutch title of 150–175 chars starting with the brand name.`,
       impact: '15–25% CTR improvement' });
 
-  if (shortTitles > 0)
+  if (!allTitlesMissing && shortTitles > 0)
     recs.push({ priority: 'high', title: 'Short product titles',
       action: `${shortTitles} offer(s) have titles under 150 chars. Expand to 150–175 chars with relevant keywords.`,
       impact: '10–20% CTR improvement' });
@@ -95,7 +107,8 @@ export function analyzeContent(
 
   if (insightsMap) {
     for (const offer of offers) {
-      const offerId = offer['Offer Id'] ?? offer['offer_id'] ?? '';
+      // bol.com v10 offers export CSV uses 'offer-id' (hyphen); accept all variants
+      const offerId = offer['offer-id'] ?? offer['Offer Id'] ?? offer['offer_id'] ?? '';
       const ins = insightsMap[offerId];
       if (ins) {
         totalVisits      += ins.visits;
@@ -131,9 +144,11 @@ export function analyzeContent(
       titles_in_range:          titleScores.filter(s => s === 100).length,
       titles_short:             shortTitles,
       titles_missing:           missingTitles,
+      // Signals that title data is not available in the offers export (LVB/FBB sellers)
+      titles_not_in_export:     allTitlesMissing,
       price_set_pct:            Math.round(priceSetPct * 100),
       forbidden_keyword_warning: forbiddenKeywords.some(kw =>
-        offers.some(o => (o['title'] ?? '').toLowerCase().includes(kw.toLowerCase()))
+        offers.some(o => (o['title'] ?? o['unknown-product-title'] ?? '').toLowerCase().includes(kw.toLowerCase()))
       ),
       // Offer insights aggregates (only set when insightsMap provided)
       ...(insightsMap ? {
@@ -314,19 +329,26 @@ export function analyzeOrders(orders: unknown[]): AnalysisResult {
 interface AdsCampaign {
   campaignId?: string;
   name?: string;
-  status?: string;
-  dailyBudget?: number;          // flat (old API versions)
-  budget?: { dailyBudget?: number }; // nested (current API)
+  state?: string;   // bol.com Advertiser API v11: 'ENABLED' | 'PAUSED' | 'ARCHIVED'
+  status?: string;  // fallback for older response shapes
+  // v11 wraps dailyBudget in an object { amount, currency }
+  dailyBudget?: number | { amount?: number; currency?: string };
+  budget?: { dailyBudget?: number };
 }
 
 interface AdsPerformanceRow {
   campaignId?: string;
-  spend?: number;
   impressions?: number;
   clicks?: number;
-  conversions?: number; // some API versions
-  orders?: number;      // bol.com Advertising API v1 uses "orders"
+  // bol.com Advertiser API v11 field names:
+  cost?: number;           // ad spend
+  sales14d?: number;       // attributed revenue (14-day window)
+  conversions14d?: number; // attributed conversions (14-day window)
+  // Legacy / fallback field names:
+  spend?: number;
   revenue?: number;
+  conversions?: number;
+  orders?: number;
 }
 
 export function analyzeAdvertising(
@@ -356,12 +378,12 @@ export function analyzeAdvertising(
   }> = [];
 
   for (const row of perf) {
-    const spend       = row.spend       ?? 0;
+    // bol.com Advertiser API v11 uses cost/sales14d/conversions14d; fall back to legacy names
+    const spend       = row.cost        ?? row.spend   ?? 0;
     const impressions = row.impressions ?? 0;
     const clicks      = row.clicks      ?? 0;
-    // bol.com Advertising API v1 uses "orders"; older versions use "conversions"
-    const conversions = row.conversions ?? row.orders ?? 0;
-    const revenue     = row.revenue     ?? 0;
+    const conversions = row.conversions14d ?? row.conversions ?? row.orders ?? 0;
+    const revenue     = row.sales14d    ?? row.revenue ?? 0;
 
     totalSpend       += spend;
     totalImpressions += impressions;
@@ -370,8 +392,11 @@ export function analyzeAdvertising(
     totalRevenue     += revenue;
 
     const campaign    = cMap.get(row.campaignId ?? '');
-    // bol.com Advertising API v1 nests daily budget: campaign.budget.dailyBudget
-    const dailyBudget = campaign?.dailyBudget ?? campaign?.budget?.dailyBudget ?? 0;
+    // v11 dailyBudget may be an object { amount, currency }; fall back to flat number
+    const rawBudget   = campaign?.dailyBudget;
+    const dailyBudget = typeof rawBudget === 'object' && rawBudget !== null
+      ? ((rawBudget as { amount?: number }).amount ?? 0)
+      : ((rawBudget as number | undefined) ?? campaign?.budget?.dailyBudget ?? 0);
     // Estimate budget utilisation: spend vs 30-day budget
     const budget_utilisation_pct = dailyBudget > 0 ? Math.min(100, Math.round((spend / (dailyBudget * 30)) * 100)) : 0;
 
@@ -392,7 +417,9 @@ export function analyzeAdvertising(
 
   const overallCtr  = totalImpressions > 0 ? Math.round((totalClicks / totalImpressions) * 10000) / 100 : 0;
   const overallRoas = totalSpend > 0 ? Math.round((totalRevenue / totalSpend) * 100) / 100 : 0;
-  const activeCampaigns = (campaigns as AdsCampaign[]).filter(c => c.status === 'ACTIVE').length;
+  // v11 uses state === 'ENABLED'; fall back to status === 'ACTIVE' for older shapes
+  const activeCampaigns = (campaigns as AdsCampaign[])
+    .filter(c => (c.state ?? c.status) === 'ENABLED').length;
 
   // Scoring
   let score = 70;
@@ -400,7 +427,7 @@ export function analyzeAdvertising(
   else if (overallRoas >= 3) score += 10;
   else if (overallRoas < 1 && totalSpend > 0) score -= 20;
 
-  const cappedCampaigns = perCampaign.filter(c => c.budgetUsedPct > 95);
+  const cappedCampaigns = perCampaign.filter(c => c.budget_utilisation_pct > 95);
   if (cappedCampaigns.length > 0) score -= 5;
 
   const recs: AnalysisResult['recommendations'] = [];

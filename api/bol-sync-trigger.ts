@@ -400,7 +400,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           // Offer insights
           const insightsMap: OfferInsightsMap = {};
-          const offerIds = offers.map((o: Record<string, string>) => o['Offer Id'] ?? o['offer_id'] ?? '').filter(Boolean);
+          // bol.com v10 offers export CSV uses 'offer-id' (hyphen); accept all variants
+          const offerIds = offers.map((o: Record<string, string>) => o['offer-id'] ?? o['Offer Id'] ?? o['offer_id'] ?? '').filter(Boolean);
           for (let i = 0; i < offerIds.length; i += 20) {
             const batch   = offerIds.slice(i, i + 20);
             const rawList = await getOfferInsights(token, batch);

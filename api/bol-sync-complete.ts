@@ -116,7 +116,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // ── Fetch offer insights (in batches of 20, with sleep) ─────────────
         const insightsMap: OfferInsightsMap = {};
         const offerIds = offers
-          .map(o => o['Offer Id'] ?? o['offer_id'] ?? '')
+          // bol.com v10 offers export CSV uses 'offer-id' (hyphen); accept all variants
+          .map(o => o['offer-id'] ?? o['Offer Id'] ?? o['offer_id'] ?? '')
           .filter(Boolean);
 
         const BATCH = 20;
