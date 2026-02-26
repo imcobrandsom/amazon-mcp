@@ -12,6 +12,5 @@
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
-  ],
-  "_crons_disabled": "moved to GitHub Actions — see .github/workflows/bol-sync.yml"
+  ]
 }
