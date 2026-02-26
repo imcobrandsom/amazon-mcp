@@ -11,6 +11,7 @@ import type {
   BolProduct,
   BolCampaignPerformance,
   BolKeywordPerformance,
+  BolCampaignChartPoint,
 } from '../types/bol';
 import { supabase } from './supabase';
 
@@ -130,6 +131,14 @@ export function getBolCampaignsForClient(customerId: string): Promise<{
   count: number;
 }> {
   return apiFetch(`/bol-campaigns?customerId=${customerId}`);
+}
+
+// ── Campaign chart (daily aggregated time-series) ─────────────────────────────
+
+export function getBolCampaignChart(customerId: string, days: 7 | 14 | 30 | 90): Promise<{
+  points: BolCampaignChartPoint[];
+}> {
+  return apiFetch(`/bol-campaigns-chart?customerId=${customerId}&days=${days}`);
 }
 
 // ── Products (inventory + listings join) ──────────────────────────────────────

@@ -117,6 +117,19 @@ export interface BolKeywordPerformance {
   synced_at: string;
 }
 
+// ── Campaign chart point (daily aggregate) ────────────────────────────────────
+
+export interface BolCampaignChartPoint {
+  date: string;        // 'YYYY-MM-DD'
+  spend: number;
+  revenue: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  roas: number;
+  ctr_pct: number;
+}
+
 // ── Competitor snapshot ───────────────────────────────────────────────────────
 
 export interface BolCompetitorSnapshot {

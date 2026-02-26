@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -29,6 +29,7 @@ import {
   getBolKeywordsForClient,
   getBolProducts,
   getBolCampaignsForClient,
+  getBolCampaignChart,
   triggerSync,
   type BolSyncType,
 } from '../lib/bol-api';
@@ -41,8 +42,18 @@ import type {
   BolProduct,
   BolCampaignPerformance,
   BolKeywordPerformance,
+  BolCampaignChartPoint,
 } from '../types/bol';
 import clsx from 'clsx';
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from 'recharts';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -385,6 +396,8 @@ function ProductsSection({
   const [search, setSearch]         = useState('');
   const [sortKey, setSortKey]       = useState<SortKey>('regularStock');
   const [sortDir, setSortDir]       = useState<SortDir>('asc');
+  const [pageSize, setPageSize]     = useState<25 | 50 | 100>(25);
+  const [page, setPage]             = useState(0);
 
   useEffect(() => {
     if (!bolCustomerId) return;
@@ -392,6 +405,9 @@ function ProductsSection({
       .then(r => setProducts(r.products))
       .catch(e => setProdError(e.message ?? 'Failed to load products'));
   }, [bolCustomerId]);
+
+  // Reset to page 0 when search / sort / pageSize changes
+  useEffect(() => { setPage(0); }, [search, sortKey, sortDir, pageSize]);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -421,6 +437,9 @@ function ProductsSection({
     return 0;
   });
 
+  const totalPages = Math.ceil(sorted.length / pageSize);
+  const paged = sorted.slice(page * pageSize, (page + 1) * pageSize);
+
   // ── aggregate stats from analysis findings ──
   const f = (analysis?.findings ?? {}) as {
     offers_count?: number;
@@ -442,13 +461,36 @@ function ProductsSection({
     }>;
   };
 
-  const total      = f.offers_count ?? 0;
-  const inRange    = f.titles_in_range ?? 0;
-  const short      = f.titles_short    ?? 0;
-  const missing    = f.titles_missing  ?? 0;
-  const inRangePct = total > 0 ? Math.round((inRange / total) * 100) : 0;
+  // ── title quality computed from actual products (inventory data has titles; CSV export may not) ──
+  const titleStats = useMemo(() => {
+    const ps = products ?? [];
+    const total   = ps.length;
+    const optimal = ps.filter(p => p.title && p.title.length >= 150 && p.title.length <= 175).length;
+    const tooLong = ps.filter(p => p.title && p.title.length > 175).length;
+    const short   = ps.filter(p => p.title && p.title.length > 0 && p.title.length < 150).length;
+    const missing = ps.filter(p => !p.title || p.title.trim().length === 0).length;
+    return { total, optimal, tooLong, short, missing };
+  }, [products]);
 
-  const hasInsights   = (f.per_offer_insights?.length ?? 0) > 0;
+  // ── price stats computed from products (listings JSON has prices; CSV export may not) ──
+  const priceStats = useMemo(() => {
+    const ps = products ?? [];
+    const total     = ps.length;
+    const withPrice = ps.filter(p => p.price !== null && p.price > 0).length;
+    const pct       = total > 0 ? Math.round((withPrice / total) * 100) : 100;
+    return { withPrice, pct };
+  }, [products]);
+
+  // ── suppress stale price recommendation when products data confirms prices are set ──
+  const filteredRecs = useMemo(() => {
+    const recs = analysis?.recommendations ?? [];
+    if (products && priceStats.pct >= 95) {
+      return recs.filter(r => !r.action.includes('have no price set'));
+    }
+    return recs;
+  }, [analysis?.recommendations, products, priceStats.pct]);
+
+  const hasInsights    = (f.per_offer_insights?.length ?? 0) > 0;
   const sortedInsights = [...(f.per_offer_insights ?? [])].sort((a, b) => b.visits - a.visits);
 
   const buyBoxColor = (pct: number) =>
@@ -475,7 +517,7 @@ function ProductsSection({
 
       {/* Stats row */}
       <div className="grid grid-cols-3 gap-3">
-        <StatTile label="Total offers" value={total} />
+        <StatTile label="Total products" value={products ? titleStats.total : (f.offers_count ?? 0)} />
         <StatTile
           label="Avg title score"
           value={`${f.avg_title_score ?? 0}`}
@@ -484,8 +526,10 @@ function ProductsSection({
         />
         <StatTile
           label="Offers with price"
-          value={`${f.price_set_pct ?? 100}%`}
-          color={(f.price_set_pct ?? 100) < 100 ? 'red' : 'green'}
+          value={products ? `${priceStats.pct}%` : `${f.price_set_pct ?? 100}%`}
+          color={products
+            ? (priceStats.pct < 100 ? 'amber' : 'green')
+            : ((f.price_set_pct ?? 100) < 100 ? 'red' : 'green')}
         />
       </div>
 
@@ -510,34 +554,62 @@ function ProductsSection({
         </div>
       )}
 
-      {/* Title quality breakdown */}
+      {/* Title quality breakdown — sourced from inventory products (accurate for FBB sellers) */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-100">
           <h3 className="text-sm font-semibold text-slate-800">Title Quality Breakdown</h3>
-          <p className="text-xs text-slate-400 mt-0.5">Optimal: 150–175 characters, starts with brand name</p>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Optimal: 150–175 characters · {products ? titleStats.total : '…'} products
+          </p>
         </div>
         <div className="divide-y divide-slate-100">
-          {[
-            { label: 'Optimal (150–175 chars)', count: inRange, pct: inRangePct, good: true },
-            { label: 'Short (< 150 chars)',     count: short,   pct: total > 0 ? Math.round((short / total) * 100) : 0,   bad: short > 0 },
-            { label: 'Missing / empty',         count: missing, pct: total > 0 ? Math.round((missing / total) * 100) : 0, bad: missing > 0 },
-          ].map(row => (
-            <div key={row.label} className="flex items-center gap-4 px-4 py-3">
-              <span className="text-xs text-slate-600 flex-1">{row.label}</span>
-              <div className="w-32 bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                <div
-                  className={clsx('h-full rounded-full', row.good ? 'bg-green-500' : row.bad ? 'bg-red-400' : 'bg-slate-300')}
-                  style={{ width: `${row.pct}%` }}
-                />
+          {products === null ? (
+            [1, 2, 3, 4].map(i => (
+              <div key={i} className="flex items-center gap-4 px-4 py-3 animate-pulse">
+                <div className="h-3 bg-slate-100 rounded flex-1" />
+                <div className="w-32 h-1.5 bg-slate-100 rounded-full" />
+                <div className="w-10 h-3 bg-slate-100 rounded" />
               </div>
-              <span className={clsx('text-xs font-semibold w-10 text-right',
-                row.good ? 'text-green-600' : row.bad && row.count > 0 ? 'text-red-600' : 'text-slate-400'
-              )}>
-                {row.count}
-              </span>
-              <span className="text-xs text-slate-400 w-8 text-right">{row.pct}%</span>
-            </div>
-          ))}
+            ))
+          ) : (
+            [
+              { label: 'Optimal (150–175 chars)', count: titleStats.optimal, good: true,                    bad: false },
+              { label: 'Too long (> 175 chars)',  count: titleStats.tooLong, good: false, bad: titleStats.tooLong > 0 },
+              { label: 'Short (< 150 chars)',     count: titleStats.short,   good: false, bad: titleStats.short > 0   },
+              { label: 'Missing / empty',         count: titleStats.missing, good: false, bad: titleStats.missing > 0 },
+            ].map(row => {
+              const pct = titleStats.total > 0 ? Math.round((row.count / titleStats.total) * 100) : 0;
+              return (
+                <div key={row.label} className="flex items-center gap-4 px-4 py-3">
+                  <span className="text-xs text-slate-600 flex-1">{row.label}</span>
+                  <div className="w-32 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className={clsx('h-full rounded-full', row.good ? 'bg-green-500' : row.bad ? 'bg-red-400' : 'bg-slate-300')}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <span className={clsx('text-xs font-semibold w-10 text-right',
+                    row.good ? 'text-green-600' : row.bad && row.count > 0 ? 'text-red-600' : 'text-slate-400'
+                  )}>
+                    {row.count}
+                  </span>
+                  <span className="text-xs text-slate-400 w-8 text-right">{pct}%</span>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Description quality placeholder — catalog API sync not yet enabled */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-800">Description Quality</h3>
+          <p className="text-xs text-slate-400 mt-0.5">Product descriptions from bol.com catalog API</p>
+        </div>
+        <div className="px-4 py-6 text-center space-y-1">
+          <p className="text-xs text-slate-400">Description data is not yet available.</p>
+          <p className="text-xs text-slate-300">Enable catalog sync to see description quality metrics.</p>
         </div>
       </div>
 
@@ -588,13 +660,29 @@ function ProductsSection({
             <h3 className="text-sm font-semibold text-slate-800">All products</h3>
             <p className="text-xs text-slate-400 mt-0.5">From latest inventory + listings sync</p>
           </div>
-          <input
-            type="text"
-            placeholder="Search title or EAN…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 w-52 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-          />
+          <div className="flex items-center gap-2">
+            {/* Per-page selector */}
+            <div className="flex items-center gap-1">
+              {([25, 50, 100] as const).map(n => (
+                <button
+                  key={n}
+                  onClick={() => setPageSize(n)}
+                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none',
+                    pageSize === n
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                  )}
+                >{n}</button>
+              ))}
+            </div>
+            <input
+              type="text"
+              placeholder="Search title or EAN…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 w-52 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+            />
+          </div>
         </div>
 
         {prodError && (
@@ -611,7 +699,7 @@ function ProductsSection({
           </p>
         )}
 
-        {sorted.length > 0 && (
+        {paged.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -646,7 +734,7 @@ function ProductsSection({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {sorted.map((p, i) => (
+                {paged.map((p, i) => (
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="px-4 py-2.5 text-slate-700 max-w-xs">
                       <span className="block truncate" title={p.title ?? undefined}>
@@ -690,6 +778,32 @@ function ProductsSection({
                 ))}
               </tbody>
             </table>
+
+            {/* Pagination footer */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-2 border-t border-slate-100 text-xs text-slate-500">
+                <span>
+                  Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, sorted.length)} of {sorted.length}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                    disabled={page === 0}
+                    className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <span>{page + 1}/{totalPages}</span>
+                  <button
+                    onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                    disabled={page === totalPages - 1}
+                    className="p-1 rounded hover:bg-slate-100 disabled:opacity-30"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -698,7 +812,7 @@ function ProductsSection({
         )}
       </div>
 
-      <RecList recs={analysis.recommendations ?? []} />
+      <RecList recs={filteredRecs} />
     </div>
   );
 }
@@ -865,6 +979,9 @@ function OrdersSection({ analysis }: { analysis: BolAnalysis | null }) {
 
 // ── Campaign Section ───────────────────────────────────────────────────────────
 
+type ChartDays   = 7 | 14 | 30 | 90;
+type ChartMetric = 'spend' | 'roas' | 'ctr_pct' | 'conversions';
+
 function CampaignSection({
   analysis,
   bolCustomerId,
@@ -878,6 +995,22 @@ function CampaignSection({
   } | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Pagination — campaigns table
+  const [campPage, setCampPage]         = useState(0);
+  const [campPageSize, setCampPageSize] = useState<25 | 50 | 100>(25);
+  useEffect(() => { setCampPage(0); }, [campPageSize]);
+
+  // Pagination — keywords table
+  const [kwPage, setKwPage]         = useState(0);
+  const [kwPageSize, setKwPageSize] = useState<25 | 50 | 100>(25);
+  useEffect(() => { setKwPage(0); }, [kwPageSize]);
+
+  // Chart state
+  const [chartDays, setChartDays]         = useState<ChartDays>(30);
+  const [chartMetric, setChartMetric]     = useState<ChartMetric>('spend');
+  const [chartData, setChartData]         = useState<BolCampaignChartPoint[] | null>(null);
+  const [chartLoading, setChartLoading]   = useState(false);
+
   useEffect(() => {
     if (!bolCustomerId) return;
     setLoading(true);
@@ -887,16 +1020,30 @@ function CampaignSection({
       .finally(() => setLoading(false));
   }, [bolCustomerId]);
 
-  // Aggregate stats still come from analysis.findings (correct 30-day totals)
-  const f = (analysis?.findings ?? {}) as {
-    total_spend?: number;
-    total_clicks?: number;
-    ctr_pct?: number;
-    roas?: number;
-    conversion_rate_pct?: number;
-  };
-  const roas      = f.roas ?? 0;
-  const roasColor = roas >= 5 ? 'green' : roas >= 3 ? 'amber' : 'red';
+  useEffect(() => {
+    if (!bolCustomerId) return;
+    setChartLoading(true);
+    getBolCampaignChart(bolCustomerId, chartDays)
+      .then(r => setChartData(r.points))
+      .catch(() => setChartData([]))
+      .finally(() => setChartLoading(false));
+  }, [bolCustomerId, chartDays]);
+
+  // ── Aggregate metrics computed from live campData (accurate vs stale analysis.findings) ──
+  const campMetrics = useMemo(() => {
+    const cs = campData?.campaigns ?? [];
+    const spend       = cs.reduce((s, c) => s + (c.spend       ?? 0), 0);
+    const revenue     = cs.reduce((s, c) => s + (c.revenue     ?? 0), 0);
+    const impressions = cs.reduce((s, c) => s + (c.impressions ?? 0), 0);
+    const clicks      = cs.reduce((s, c) => s + (c.clicks      ?? 0), 0);
+    const conversions = cs.reduce((s, c) => s + (c.conversions ?? 0), 0);
+    const roas    = spend > 0 ? revenue / spend : 0;
+    const ctrPct  = impressions > 0 ? (clicks / impressions) * 100 : 0;
+    const cvrPct  = clicks > 0 ? (conversions / clicks) * 100 : 0;
+    return { spend, revenue, clicks, conversions, roas, ctrPct, cvrPct };
+  }, [campData]);
+
+  const roasColor = campMetrics.roas >= 5 ? 'green' : campMetrics.roas >= 3 ? 'amber' : 'red';
 
   if (!analysis) return <SyncPending section="campaign" />;
 
@@ -909,54 +1056,176 @@ function CampaignSection({
     );
   }
 
-  const campaigns = [...(campData?.campaigns ?? [])].sort(
-    (a, b) => (b.spend ?? 0) - (a.spend ?? 0)
-  );
-  const keywords = [...(campData?.keywords ?? [])]
-    .sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0))
-    .slice(0, 20);
-
   const acosColor = (v: number | null) =>
     v == null ? 'text-slate-400' : v <= 20 ? 'text-green-600' : v <= 40 ? 'text-amber-600' : 'text-red-600';
 
+  // Sorted + paginated campaigns
+  const sortedCamps   = [...(campData?.campaigns ?? [])].sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0));
+  const campTotalPages = Math.ceil(sortedCamps.length / campPageSize);
+  const pagedCamps    = sortedCamps.slice(campPage * campPageSize, (campPage + 1) * campPageSize);
+
+  // Sorted + paginated keywords (no more hard 20-row cap)
+  const sortedKws   = [...(campData?.keywords ?? [])].sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0));
+  const kwTotalPages = Math.ceil(sortedKws.length / kwPageSize);
+  const pagedKws    = sortedKws.slice(kwPage * kwPageSize, (kwPage + 1) * kwPageSize);
+
+  const chartMetricLabels: Record<ChartMetric, string> = {
+    spend: 'Spend', roas: 'ROAS', ctr_pct: 'CTR', conversions: 'Conversions',
+  };
+
   return (
     <div className="space-y-4">
-      {/* Stats row — from analysis.findings (30-day aggregates) */}
+      {/* Stats row — computed from live campData */}
       <div className="grid grid-cols-4 gap-3">
         <StatTile
           label="Total ad spend"
-          value={`€${fmt(f.total_spend ?? 0, 2)}`}
-          sub="last 30 days"
+          value={`€${fmt(campMetrics.spend, 2)}`}
+          sub="all active campaigns"
         />
         <StatTile
           label="ROAS"
-          value={`${fmt(roas, 2)}×`}
+          value={`${fmt(campMetrics.roas, 2)}×`}
           sub="revenue per €1 spent"
           color={roasColor}
         />
         <StatTile
           label="CTR"
-          value={`${fmt(f.ctr_pct ?? 0, 2)}%`}
-          sub={`${fmt(f.total_clicks ?? 0)} clicks`}
-          color={(f.ctr_pct ?? 0) > 0.5 ? 'green' : 'amber'}
+          value={`${fmt(campMetrics.ctrPct, 2)}%`}
+          sub={`${fmt(campMetrics.clicks)} clicks`}
+          color={campMetrics.ctrPct > 0.5 ? 'green' : 'amber'}
         />
         <StatTile
           label="Conversions"
-          value={fmt(Math.round((f.total_clicks ?? 0) * ((f.conversion_rate_pct ?? 0) / 100)))}
-          sub={`${fmt(f.conversion_rate_pct ?? 0, 1)}% conv. rate`}
+          value={fmt(campMetrics.conversions)}
+          sub={`${fmt(campMetrics.cvrPct, 1)}% conv. rate`}
         />
       </div>
 
+      {/* Performance chart */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800">Advertising Performance</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Daily totals across all campaigns</p>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Metric selector */}
+            <div className="flex items-center gap-1">
+              {(['spend', 'roas', 'ctr_pct', 'conversions'] as ChartMetric[]).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setChartMetric(m)}
+                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none',
+                    chartMetric === m
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                  )}
+                >
+                  {chartMetricLabels[m]}
+                </button>
+              ))}
+            </div>
+            {/* Date range */}
+            <div className="flex items-center gap-1">
+              {([7, 14, 30, 90] as ChartDays[]).map(d => (
+                <button
+                  key={d}
+                  onClick={() => setChartDays(d)}
+                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none',
+                    chartDays === d
+                      ? 'bg-slate-700 text-white border-slate-700'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                  )}
+                >
+                  {d}d
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="px-4 py-4">
+          {chartLoading ? (
+            <div className="h-48 flex items-center justify-center">
+              <RefreshCw size={16} className="animate-spin text-slate-400" />
+            </div>
+          ) : !chartData || chartData.length === 0 ? (
+            <div className="h-48 flex items-center justify-center">
+              <p className="text-xs text-slate-400">No chart data yet — run an advertising sync first.</p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                <defs>
+                  <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 10, fill: '#94a3b8' }}
+                  tickFormatter={d => (d as string).slice(5)}
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: '#94a3b8' }}
+                  tickFormatter={v =>
+                    chartMetric === 'spend'   ? `€${v}` :
+                    chartMetric === 'roas'    ? `${v}×`  :
+                    chartMetric === 'ctr_pct' ? `${v}%`  : String(v)
+                  }
+                  width={52}
+                />
+                <Tooltip
+                  contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #e2e8f0' }}
+                  formatter={(v: unknown) => {
+                    const num = v as number;
+                    if (chartMetric === 'spend')   return [`€${num.toFixed(2)}`, 'Spend'];
+                    if (chartMetric === 'roas')    return [`${num.toFixed(2)}×`, 'ROAS'];
+                    if (chartMetric === 'ctr_pct') return [`${num.toFixed(2)}%`, 'CTR'];
+                    return [num, 'Conversions'];
+                  }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey={chartMetric}
+                  stroke="#3b82f6"
+                  strokeWidth={2}
+                  fill="url(#chartGrad)"
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
       {/* Per-campaign breakdown — from bol_campaign_performance */}
-      {campaigns.length === 0 ? (
+      {sortedCamps.length === 0 ? (
         <SyncPending section="campaign" />
       ) : (
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100">
-            <h3 className="text-sm font-semibold text-slate-800">Campaign Breakdown</h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Sorted by spend · Amber = budget &gt;95% used · ACOS = ad cost of sales
-            </p>
+          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800">Campaign Breakdown</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Sorted by spend · Amber = budget &gt;95% used · ACOS = ad cost of sales
+              </p>
+            </div>
+            <div className="flex items-center gap-1">
+              {([25, 50, 100] as const).map(n => (
+                <button
+                  key={n}
+                  onClick={() => setCampPageSize(n)}
+                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none',
+                    campPageSize === n
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                  )}
+                >{n}</button>
+              ))}
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -974,7 +1243,7 @@ function CampaignSection({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {campaigns.map((c, i) => {
+                {pagedCamps.map((c, i) => {
                   const budgetUtil = c.budget && c.spend != null
                     ? (c.spend / c.budget) * 100
                     : 0;
@@ -1035,17 +1304,50 @@ function CampaignSection({
                 })}
               </tbody>
             </table>
+            {campTotalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-2 border-t border-slate-100 text-xs text-slate-500">
+                <span>
+                  Showing {campPage * campPageSize + 1}–{Math.min((campPage + 1) * campPageSize, sortedCamps.length)} of {sortedCamps.length}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setCampPage(p => Math.max(0, p - 1))} disabled={campPage === 0}
+                    className="p-1 rounded hover:bg-slate-100 disabled:opacity-30">
+                    <ChevronLeft size={14} />
+                  </button>
+                  <span>{campPage + 1}/{campTotalPages}</span>
+                  <button onClick={() => setCampPage(p => Math.min(campTotalPages - 1, p + 1))} disabled={campPage === campTotalPages - 1}
+                    className="p-1 rounded hover:bg-slate-100 disabled:opacity-30">
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* Keyword performance — from bol_keyword_performance */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100">
-          <h3 className="text-sm font-semibold text-slate-800">Keyword Performance</h3>
-          <p className="text-xs text-slate-400 mt-0.5">Top 20 by spend · ACOS: green ≤20%, amber ≤40%, red &gt;40%</p>
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800">Keyword Performance</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Sorted by spend · ACOS: green ≤20%, amber ≤40%, red &gt;40%</p>
+          </div>
+          <div className="flex items-center gap-1">
+            {([25, 50, 100] as const).map(n => (
+              <button
+                key={n}
+                onClick={() => setKwPageSize(n)}
+                className={clsx('px-2 py-1 rounded border text-[11px] leading-none',
+                  kwPageSize === n
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                )}
+              >{n}</button>
+            ))}
+          </div>
         </div>
-        {keywords.length === 0 ? (
+        {sortedKws.length === 0 ? (
           <p className="px-4 py-4 text-xs text-slate-400">
             No keyword data yet. Run a sync with advertising credentials to populate.
           </p>
@@ -1064,7 +1366,7 @@ function CampaignSection({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {keywords.map((k, i) => (
+                {pagedKws.map((k, i) => (
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="px-4 py-2.5 text-slate-700">
                       {k.keyword_text ?? <span className="text-slate-400 italic">—</span>}
@@ -1091,6 +1393,24 @@ function CampaignSection({
                 ))}
               </tbody>
             </table>
+            {kwTotalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-2 border-t border-slate-100 text-xs text-slate-500">
+                <span>
+                  Showing {kwPage * kwPageSize + 1}–{Math.min((kwPage + 1) * kwPageSize, sortedKws.length)} of {sortedKws.length}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setKwPage(p => Math.max(0, p - 1))} disabled={kwPage === 0}
+                    className="p-1 rounded hover:bg-slate-100 disabled:opacity-30">
+                    <ChevronLeft size={14} />
+                  </button>
+                  <span>{kwPage + 1}/{kwTotalPages}</span>
+                  <button onClick={() => setKwPage(p => Math.min(kwTotalPages - 1, p + 1))} disabled={kwPage === kwTotalPages - 1}
+                    className="p-1 rounded hover:bg-slate-100 disabled:opacity-30">
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
