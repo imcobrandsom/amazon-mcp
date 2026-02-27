@@ -11,12 +11,18 @@ dist/
 # Vercel
 .vercel/
 
-# Scripts
+# Scripts (test/diagnostic)
 trigger-backfill.js
 check-campaign-data.js
 test-api-endpoint.js
 test-chart-date-range.js
 check-synced-at-dates.js
+verify-migration-009.js
+check-period-dates.js
+test-date-range-filtering.js
+apply-migration.js
+run-migration-009.js
+quick-migration.sh
 
 # IDE
 .DS_Store
