@@ -6,12 +6,7 @@ import MessageBubble from './MessageBubble';
 import { sendGlobalChatMessage } from '../../lib/api';
 import { supabase } from '../../lib/supabase';
 
-const SUGGESTED_AMAZON = [
-  'Which client has the highest ROAS this week?',
-  'Compare NL campaigns across all clients',
-  'Show underperforming campaigns portfolio-wide',
-];
-
+// Bol.com-specific suggested questions
 const SUGGESTED_BOL = [
   'What is my total ad spend this month?',
   'Which campaigns have ACOS > 30%?',
@@ -220,8 +215,6 @@ export default function GlobalChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const isBolMode = bolCustomerId !== undefined || bolCustomers.length > 0;
-
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, suggestData]);
@@ -241,8 +234,9 @@ export default function GlobalChatPanel({
     try {
       const response = await sendGlobalChatMessage({
         messages: allPrev,
+        chatMode: 'bol',
         bolCustomerId,
-        bolFilters: isBolMode ? (bolFilters || {}) : undefined,
+        bolFilters: bolFilters || {},
       });
 
       setMessages([
@@ -291,10 +285,8 @@ export default function GlobalChatPanel({
     navigate(`/clients/${clientId}`);
   };
 
-  // Get suggested questions based on mode
-  const suggestedQuestions = isBolMode
-    ? (bolCustomerId ? SUGGESTED_BOL : SUGGESTED_BOL_GLOBAL)
-    : SUGGESTED_AMAZON;
+  // Get suggested questions based on whether customer is selected
+  const suggestedQuestions = bolCustomerId ? SUGGESTED_BOL : SUGGESTED_BOL_GLOBAL;
 
   // Get selected customer name
   const selectedCustomerName = bolCustomerId
@@ -306,21 +298,13 @@ export default function GlobalChatPanel({
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 flex-shrink-0">
         <div className="flex items-center gap-2.5 flex-1 min-w-0">
-          <div className={`w-7 h-7 rounded-full ${isBolMode ? 'bg-orange-50' : 'bg-brand-50'} flex items-center justify-center flex-shrink-0`}>
-            {isBolMode ? (
-              <ShoppingBag size={14} className="text-orange-500" />
-            ) : (
-              <Bot size={14} className="text-brand-500" />
-            )}
+          <div className="w-7 h-7 rounded-full bg-orange-50 flex items-center justify-center flex-shrink-0">
+            <ShoppingBag size={14} className="text-orange-500" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-slate-900">
-              {isBolMode ? 'Bol.com AI Assistant' : 'General Chat'}
-            </p>
+            <p className="text-sm font-semibold text-slate-900">Bol.com AI Assistant</p>
             <p className="text-[10px] text-slate-400 truncate">
-              {isBolMode
-                ? (selectedCustomerName || 'All Bol customers')
-                : 'All clients · Amazon Ads'}
+              {selectedCustomerName || 'All Bol customers'}
             </p>
           </div>
         </div>
@@ -344,8 +328,8 @@ export default function GlobalChatPanel({
         </div>
       </div>
 
-      {/* Customer Selector for Bol mode */}
-      {isBolMode && bolCustomers.length > 0 && onBolCustomerChange && (
+      {/* Customer Selector */}
+      {bolCustomers.length > 0 && onBolCustomerChange && (
         <div className="px-4 py-2.5 border-b border-slate-100 flex-shrink-0 bg-slate-50">
           <label className="block text-[10px] font-medium text-slate-500 uppercase tracking-wide mb-1.5">
             Focus on customer
@@ -372,29 +356,21 @@ export default function GlobalChatPanel({
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center py-8">
-            <div className={`w-12 h-12 rounded-full ${isBolMode ? 'bg-orange-50' : 'bg-brand-50'} flex items-center justify-center mb-3`}>
-              {isBolMode ? (
-                <ShoppingBag size={22} className="text-orange-400" />
-              ) : (
-                <Bot size={22} className="text-brand-400" />
-              )}
+            <div className="w-12 h-12 rounded-full bg-orange-50 flex items-center justify-center mb-3">
+              <ShoppingBag size={22} className="text-orange-400" />
             </div>
-            <p className="text-sm font-medium text-slate-700">
-              {isBolMode ? 'Ask about Bol.com data' : 'Ask about any client'}
-            </p>
+            <p className="text-sm font-medium text-slate-700">Ask about Bol.com data</p>
             <p className="text-xs text-slate-400 mt-1 max-w-[280px] leading-relaxed">
-              {isBolMode
-                ? (bolCustomerId
-                    ? 'Get insights on campaigns, products, competitors, and keyword rankings.'
-                    : 'Query performance across all Bol customers or select a specific customer above.')
-                : 'Query campaigns, compare performance, or spot opportunities across the full portfolio.'}
+              {bolCustomerId
+                ? 'Get insights on campaigns, products, competitors, and keyword rankings.'
+                : 'Query performance across all Bol customers or select a specific customer above.'}
             </p>
             <div className="mt-5 flex flex-col gap-2 w-full max-w-xs">
               {suggestedQuestions.map((q) => (
                 <button
                   key={q}
                   onClick={() => handleSend(q)}
-                  className={`text-left text-xs ${isBolMode ? 'text-orange-600 bg-orange-50 hover:bg-orange-100' : 'text-brand-600 bg-brand-50 hover:bg-brand-100'} px-3 py-2 rounded-lg transition-colors leading-snug`}
+                  className="text-left text-xs text-orange-600 bg-orange-50 hover:bg-orange-100 px-3 py-2 rounded-lg transition-colors leading-snug"
                 >
                   {q}
                 </button>
@@ -429,15 +405,15 @@ export default function GlobalChatPanel({
               e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
             }}
             onKeyDown={handleKeyDown}
-            placeholder={isBolMode ? "Ask about campaigns, products, competitors…" : "Ask about any client or campaign…"}
-            className={`flex-1 resize-none px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 ${isBolMode ? 'focus:ring-orange-400' : 'focus:ring-brand-400'} focus:border-transparent min-h-[40px] max-h-[120px] leading-relaxed`}
+            placeholder="Ask about campaigns, products, competitors…"
+            className="flex-1 resize-none px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent min-h-[40px] max-h-[120px] leading-relaxed"
             rows={1}
             disabled={sending}
           />
           <button
             onClick={() => handleSend()}
             disabled={!input.trim() || sending}
-            className={`flex-shrink-0 w-9 h-9 flex items-center justify-center ${isBolMode ? 'bg-orange-500 hover:bg-orange-600' : 'bg-brand-500 hover:bg-brand-600'} text-white rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors`}
+            className="flex-shrink-0 w-9 h-9 flex items-center justify-center bg-orange-500 hover:bg-orange-600 text-white rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {sending ? <RefreshCcw size={14} className="animate-spin" /> : <Send size={14} />}
           </button>

@@ -227,6 +227,7 @@ function generateProductInsights(products: BolProduct[]): string[] {
 /**
  * Tool: bol_analyze_campaigns
  * Retrieve and analyze campaign + keyword performance.
+ * Supports portfolio mode (no customer_id) for cross-customer analysis.
  */
 async function handleBolAnalyzeCampaigns(input: BolAnalyzeCampaignsInput, _context: BolToolContext) {
   const supabase = createAdminClient();
@@ -241,6 +242,7 @@ async function handleBolAnalyzeCampaigns(input: BolAnalyzeCampaignsInput, _conte
     .gte('synced_at', cutoff_date.toISOString())
     .order('synced_at', { ascending: false });
 
+  // Only filter by customer if provided (portfolio mode if omitted)
   if (input.customer_id) {
     query = query.eq('bol_customer_id', input.customer_id);
   }
@@ -263,14 +265,60 @@ async function handleBolAnalyzeCampaigns(input: BolAnalyzeCampaignsInput, _conte
     campaigns = campaigns.filter(c => c.state === state);
   }
 
-  // Sort by spend descending, limit to top 20
+  // PORTFOLIO MODE: Group by customer if no customer_id provided
+  if (!input.customer_id) {
+    // Group campaigns by customer
+    const byCustomer = new Map<string, typeof campaigns>();
+    campaigns.forEach(c => {
+      const customerId = c.bol_customer_id;
+      if (!byCustomer.has(customerId)) {
+        byCustomer.set(customerId, []);
+      }
+      byCustomer.get(customerId)!.push(c);
+    });
+
+    // Compute per-customer aggregates
+    const customerAggregates = Array.from(byCustomer.entries()).map(([id, camps]) => ({
+      customer_id: id,
+      campaign_count: camps.length,
+      total_spend: camps.reduce((s, c) => s + (c.spend ?? 0), 0),
+      total_revenue: camps.reduce((s, c) => s + (c.attributed_revenue ?? 0), 0),
+      total_clicks: camps.reduce((s, c) => s + (c.clicks ?? 0), 0),
+      avg_acos: camps.length > 0
+        ? camps.reduce((s, c) => s + (c.acos ?? 0), 0) / camps.length
+        : 0,
+      avg_roas: camps.length > 0
+        ? camps.reduce((s, c) => s + (c.roas ?? 0), 0) / camps.length
+        : 0,
+    }));
+
+    // Sort by spend descending
+    campaigns.sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0));
+    const top_campaigns = campaigns.slice(0, 20);
+
+    // Compute overall summary
+    const summary = computeCampaignSummary(campaigns);
+
+    // Generate insights
+    const insights = generateCampaignInsights(campaigns);
+
+    return {
+      summary: {
+        ...summary,
+        customer_count: byCustomer.size,
+      },
+      by_customer: customerAggregates,
+      top_campaigns,
+      total_campaign_count: campaigns.length,
+      insights,
+    };
+  }
+
+  // SINGLE CUSTOMER MODE: existing logic
   campaigns.sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0));
   const top_campaigns = campaigns.slice(0, 20);
 
-  // Compute summary
   const summary = computeCampaignSummary(campaigns);
-
-  // Generate insights
   const insights = generateCampaignInsights(campaigns);
 
   return {

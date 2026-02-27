@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { Search, Plus, MessageSquare, Trash2 } from 'lucide-react';
+import { Search, Plus, Trash2 } from 'lucide-react';
 import ClientCard from '../components/ClientCard';
-import GlobalChatPanel from '../components/Chat/GlobalChatPanel';
 import { useClients } from '../hooks/useClients';
 import { supabase } from '../lib/supabase';
 
@@ -55,7 +54,6 @@ export default function ClientOverview() {
   const { clients, loading, error, refetch } = useClients();
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
-  const [showChat, setShowChat] = useState(false);
 
   const filtered = clients.filter((c) =>
     c.name.toLowerCase().includes(search.toLowerCase())
@@ -71,22 +69,13 @@ export default function ClientOverview() {
             {clients.length} client{clients.length !== 1 ? 's' : ''} managed
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowChat(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 border border-slate-200 hover:border-brand-400 hover:bg-brand-50 text-slate-600 hover:text-brand-600 text-sm font-medium rounded-lg transition-colors"
-          >
-            <MessageSquare size={15} />
-            General Chat
-          </button>
-          <button
-            onClick={() => setShowAdd(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            <Plus size={15} />
-            Add Client
-          </button>
-        </div>
+        <button
+          onClick={() => setShowAdd(true)}
+          className="flex items-center gap-1.5 px-3.5 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-lg transition-colors"
+        >
+          <Plus size={15} />
+          Add Client
+        </button>
       </div>
 
       {/* Search */}
@@ -145,9 +134,6 @@ export default function ClientOverview() {
           onCreated={() => { setShowAdd(false); refetch(); }}
         />
       )}
-
-      {/* Global chat slide-over */}
-      {showChat && <GlobalChatPanel onClose={() => setShowChat(false)} />}
     </div>
   );
 }

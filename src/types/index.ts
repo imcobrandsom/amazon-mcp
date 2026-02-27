@@ -107,3 +107,6 @@ export interface User {
   full_name?: string;
   avatar_url?: string;
 }
+
+// Chat mode type for routing
+export type ChatMode = 'bol' | 'amazon';

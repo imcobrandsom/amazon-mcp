@@ -77,6 +77,7 @@ export function sendChatMessage(params: {
 // Can also be used for Bol.com customer-specific chat
 export function sendGlobalChatMessage(params: {
   messages: LocalMessage[];
+  chatMode: 'bol' | 'amazon';
   bolCustomerId?: string;
   bolFilters?: {
     dateRange?: { from: string; to: string };
@@ -87,6 +88,7 @@ export function sendGlobalChatMessage(params: {
     conversationId: '__global__',
     clientId: '__global__',
     marketId: '__global__',
+    chatMode: params.chatMode,
     messages: params.messages,
     clientContext: {
       clientName: 'Global',

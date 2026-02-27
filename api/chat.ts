@@ -137,6 +137,52 @@ Available tools (BOL.COM ONLY):
 - bol_create_proposal: Submit optimization proposal for approval`;
 }
 
+async function buildBolPortfolioSystemPrompt(
+  supabase: ReturnType<typeof createAdminClient>
+): Promise<string> {
+  // Load all active Bol customers for context
+  const { data: customers } = await supabase
+    .from('bol_customers')
+    .select('id, seller_name')
+    .eq('active', true)
+    .order('seller_name');
+
+  const customerList = customers
+    ?.map(c => `- ${c.seller_name} (ID: ${c.id})`)
+    .join('\n') || 'No customers found';
+
+  return `You are a Bol.com advertising specialist for Follo agency analyzing ALL Bol.com customers.
+
+CRITICAL: You have access ONLY to Bol.com data across all customers.
+- DO NOT mention Amazon, Amazon Ads, or Amazon profiles
+- DO NOT attempt to use Amazon MCP tools
+- ONLY use the bol_* tools available to you
+
+[AVAILABLE CUSTOMERS]
+${customerList}
+
+IMPORTANT GUIDELINES:
+- Use bol_analyze_* tools WITHOUT customer_id parameter to analyze across all customers
+- When analyzing specific customers, use their customer_id
+- Compare performance metrics across customers to identify outliers
+- Always show monetary values in euros (€)
+- NEVER use analysis.findings for statistics - always compute from raw data returned by tools
+
+Your job:
+1. Answer questions about Bol.com campaign performance across the portfolio
+2. Compare customers to identify underperformers and top performers
+3. Proactively identify portfolio-wide optimization opportunities
+4. When creating proposals, specify which customer(s) they apply to
+5. Be concise. Use markdown tables for comparisons.
+
+Available tools (BOL.COM ONLY):
+- bol_analyze_campaigns: Get campaign and keyword performance (omit customer_id for all customers)
+- bol_analyze_products: Check product catalog quality (requires customer_id)
+- bol_analyze_competitors: Review competitor pricing and buy box (requires customer_id)
+- bol_get_keyword_rankings: Check search ranking trends (requires customer_id)
+- bol_create_proposal: Submit optimization proposal for specific customer`;
+}
+
 const SUGGEST_CLIENT_TOOL: Anthropic.Tool = {
   name: 'suggest_client_setup',
   description:
@@ -346,82 +392,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  // ── Global chat mode: no specific client, load full portfolio ──────────────
-  if (clientId === '__global__') {
-    try {
-      const supabase = createAdminClient();
-
-      const { data: allClients } = await supabase
-        .from('clients')
-        .select('name, client_markets(country_code, roas_target, daily_budget_cap, currency, amazon_advertiser_profile_id, amazon_advertiser_account_id, state)')
-        .order('name');
-
-      const portfolioText = (allClients ?? []).map((c: Record<string, unknown>) => {
-        const mks = (c.client_markets as Record<string, unknown>[] ?? []);
-        const rows = mks.map((m: Record<string, unknown>) =>
-          `  - ${m.country_code}: Profile ${m.amazon_advertiser_profile_id}, ROAS ${m.roas_target ?? '—'}x, Budget ${m.currency} ${m.daily_budget_cap ?? '—'}/day (${m.state})`
-        ).join('\n');
-        return `${c.name}:\n${rows || '  (no markets)'}`;
-      }).join('\n\n');
-
-      const globalPrompt = `You are a marketplace optimization specialist for Follo, managing Amazon Advertising across a client portfolio.
-You have access to all clients' Amazon Ads data via MCP tools.
-
-[CLIENT PORTFOLIO]
-${portfolioText}
-
-Your job:
-1. Answer questions about any client's performance, budgets, or targets
-2. Compare metrics across clients when relevant
-3. Use Amazon Profile IDs above to query data via MCP tools
-4. Always specify which client/market you're referencing
-5. Be concise. Use markdown tables for comparisons.
-6. IMPORTANT: Whenever you retrieve advertiser profiles or account data from Amazon Ads (e.g. via list_advertiser_accounts or query_advertiser_account), ALWAYS call the suggest_client_setup tool with the profile data so the user can add the client in one click. Do this in addition to your text reply.`;
-
-      const globalResponse = await (anthropic.messages.create as Function)({
-        model: 'claude-sonnet-4-5',
-        max_tokens: 4096,
-        system: globalPrompt,
-        tools: [SUGGEST_CLIENT_TOOL],
-        messages: messages.map((m: { role: string; content: string }) => ({
-          role: m.role,
-          content: m.content,
-        })),
-        mcp_servers: [{ type: 'url' as const, url: MCP_SERVER_URL, name: 'amazon-ads' }],
-      });
-
-      let globalText = '';
-      const globalToolCalls: Array<{ name: string; input: Record<string, unknown>; id: string }> = [];
-      for (const block of globalResponse.content) {
-        if (block.type === 'text') globalText += block.text;
-        else if (block.type === 'tool_use') {
-          globalToolCalls.push({
-            name: block.name,
-            input: block.input as Record<string, unknown>,
-            id: block.id,
-          });
-        }
-      }
-
-      return res.status(200).json({
-        content: globalText,
-        toolCalls: globalToolCalls,
-        proposals: [],
-        stopReason: globalResponse.stop_reason,
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[chat/global]', message);
-      return res.status(500).json({ error: message });
-    }
-  }
-  // ──────────────────────────────────────────────────────────────────────────
-
   // ── Bol.com chat mode: customer-specific or portfolio ─────────────────────
-  const { bolCustomerId, bolFilters } = body;
-  const isBolChat = bolCustomerId !== undefined || bolFilters !== undefined;
+  const { chatMode, bolCustomerId, bolFilters } = body;
 
-  if (isBolChat) {
+  if (chatMode === 'bol') {
     try {
       const supabase = createAdminClient();
 
@@ -439,9 +413,7 @@ Your job:
 
       const systemPrompt = bolCustomerId
         ? await buildBolSystemPrompt(bolCustomerId, memory, supabase)
-        : `You are a Bol.com advertising specialist for Follo agency. You have access to all Bol customers' data.
-
-CRITICAL: You have access ONLY to Bol.com data. You do NOT have access to Amazon Ads data.
+        : await buildBolPortfolioSystemPrompt(supabase);
 - DO NOT mention Amazon, Amazon Ads, or Amazon profiles
 - DO NOT attempt to use Amazon MCP tools
 - ONLY use the bol_* tools available to you
