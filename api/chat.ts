@@ -13,10 +13,10 @@ const MCP_SERVER_URL = `${process.env.APP_URL}/api/amazon-mcp-proxy`;
 
 interface ChatRequestBody {
   conversationId: string;
-  clientId: string;
-  marketId: string;
+  clientId?: string;  // Amazon client (optional - may use bolCustomerId instead)
+  marketId?: string;  // Amazon market
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
-  clientContext: {
+  clientContext?: {  // Amazon client context (optional)
     clientName: string;
     countryCode: string;
     roasTarget: number | null;
@@ -25,8 +25,14 @@ interface ChatRequestBody {
     amazonAdvertiserProfileId: string;
     amazonAdvertiserAccountId: string;
   };
-  memory: Array<{ memory_type: string; content: string }>;
+  memory?: Array<{ memory_type: string; content: string }>;
   previousSummary?: string | null;
+  // Bol.com-specific fields
+  bolCustomerId?: string;
+  bolFilters?: {
+    dateRange?: { from: string; to: string };
+    campaignState?: string;
+  };
 }
 
 function buildSystemPrompt(
@@ -35,7 +41,7 @@ function buildSystemPrompt(
   previousSummary?: string | null
 ): string {
   const memoryText =
-    memory.length > 0
+    memory && memory.length > 0
       ? memory
           .map((m) => `[${m.memory_type.toUpperCase()}] ${m.content}`)
           .join('\n')
@@ -44,6 +50,10 @@ function buildSystemPrompt(
   const sessionText = previousSummary
     ? previousSummary
     : 'This is the first session for this client.';
+
+  if (!ctx) {
+    return 'You are a marketplace optimization specialist working for Follo.';
+  }
 
   return `You are a marketplace optimization specialist working for Follo, a digital agency managing Amazon Advertising for 20+ brands across Europe.
 You have access to Amazon Advertising data for the current client via MCP tools.
@@ -71,6 +81,56 @@ Your job:
 6. Never execute changes directly — only propose them.
 
 When you want to create a proposal (after user confirmation), call the create_proposal tool with the required fields.`;
+}
+
+async function buildBolSystemPrompt(
+  customerId: string,
+  memory: Array<{ memory_type: string; content: string }> = [],
+  supabase: ReturnType<typeof createAdminClient>
+): Promise<string> {
+  // Load Bol customer details
+  const { data: customer } = await supabase
+    .from('bol_customers')
+    .select('seller_name')
+    .eq('id', customerId)
+    .single();
+
+  const memoryText =
+    memory.length > 0
+      ? memory.map((m) => `[${m.memory_type.toUpperCase()}] ${m.content}`).join('\n')
+      : 'No memory items yet.';
+
+  return `You are a marketplace optimization specialist working for Follo, a digital agency managing Bol.com advertising for multiple sellers.
+You have access to Bol.com advertising and catalog data via specialized tools.
+
+[CUSTOMER CONTEXT]
+Seller: ${customer?.seller_name ?? 'Unknown'}
+Customer ID: ${customerId}
+
+[CUSTOMER MEMORY]
+${memoryText}
+
+IMPORTANT GUIDELINES:
+- Use bol_analyze_* tools to fetch current data before answering questions
+- NEVER use analysis.findings for statistics - always compute from raw data returned by tools
+- When creating proposals, provide clear rationale and estimated impact in euros
+- For portfolio queries, call tools without customer_id to analyze all customers
+- Be specific about date ranges when analyzing trends
+- Always show monetary values in euros (€)
+
+Your job:
+1. Answer questions about campaign performance, product quality, competitor positioning
+2. Proactively identify optimization opportunities (pause low-ROAS keywords, adjust bids, fix content)
+3. When you identify an optimization, ask for user confirmation, then call bol_create_proposal
+4. Be concise. Use markdown tables for data comparisons.
+5. Never execute changes directly — only propose them.
+
+Available tools:
+- bol_analyze_campaigns: Get campaign and keyword performance metrics
+- bol_analyze_products: Check product catalog quality (titles, prices, stock)
+- bol_analyze_competitors: Review competitor pricing and buy box status
+- bol_get_keyword_rankings: Check search ranking trends
+- bol_create_proposal: Submit optimization proposal for approval`;
 }
 
 const SUGGEST_CLIENT_TOOL: Anthropic.Tool = {
@@ -149,6 +209,116 @@ const PROPOSAL_TOOL: Anthropic.Tool = {
       'proposed_value',
       'expected_impact',
     ],
+  },
+};
+
+// ── Bol.com Tools ─────────────────────────────────────────────────────────────
+
+const BOL_ANALYZE_CAMPAIGNS_TOOL: Anthropic.Tool = {
+  name: 'bol_analyze_campaigns',
+  description: 'Analyze Bol.com advertising campaign performance. Returns campaigns and keywords with spend, revenue, ACOS, ROAS, CTR metrics. Omit customer_id for portfolio-wide analysis.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      customer_id: { type: 'string', description: 'Bol customer UUID (optional - omit for all customers)' },
+      date_range_days: { type: 'number', description: 'Days of history to analyze (default: 30, max: 180)' },
+      filters: {
+        type: 'object',
+        properties: {
+          min_spend: { type: 'number' },
+          max_acos: { type: 'number' },
+          campaign_state: { type: 'string', enum: ['enabled', 'paused', 'archived'] },
+        },
+      },
+    },
+  },
+};
+
+const BOL_ANALYZE_PRODUCTS_TOOL: Anthropic.Tool = {
+  name: 'bol_analyze_products',
+  description: 'Analyze Bol.com product catalog quality (titles, descriptions, prices, stock levels). Use to identify content gaps or inventory issues.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      customer_id: { type: 'string', description: 'Bol customer UUID' },
+      filters: {
+        type: 'object',
+        properties: {
+          missing_titles: { type: 'boolean' },
+          missing_descriptions: { type: 'boolean' },
+          out_of_stock: { type: 'boolean' },
+          eol_only: { type: 'boolean' },
+          fulfillment_method: { type: 'string', enum: ['FBR', 'FBB'] },
+        },
+      },
+    },
+    required: ['customer_id'],
+  },
+};
+
+const BOL_ANALYZE_COMPETITORS_TOOL: Anthropic.Tool = {
+  name: 'bol_analyze_competitors',
+  description: 'Analyze competitor pricing and buy box status for Bol.com products.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      customer_id: { type: 'string', description: 'Bol customer UUID' },
+      ean: { type: 'string', description: 'Specific EAN to analyze (optional - omit for catalog-wide)' },
+      focus: { type: 'string', enum: ['buy_box_losses', 'price_undercut', 'new_competitors'] },
+    },
+    required: ['customer_id'],
+  },
+};
+
+const BOL_GET_KEYWORD_RANKINGS_TOOL: Anthropic.Tool = {
+  name: 'bol_get_keyword_rankings',
+  description: 'Retrieve keyword ranking trends to identify SEO opportunities or losses.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      customer_id: { type: 'string', description: 'Bol customer UUID' },
+      ean: { type: 'string' },
+      trend_direction: { type: 'string', enum: ['improving', 'declining', 'stable'] },
+    },
+    required: ['customer_id'],
+  },
+};
+
+const BOL_CREATE_PROPOSAL_TOOL: Anthropic.Tool = {
+  name: 'bol_create_proposal',
+  description: 'Create an optimization proposal for Bol.com campaigns. Requires user approval before execution.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      customer_id: { type: 'string' },
+      proposal_type: {
+        type: 'string',
+        enum: ['bol_campaign_pause', 'bol_campaign_budget', 'bol_keyword_bid', 'bol_keyword_pause', 'bol_price_adjust'],
+      },
+      description: { type: 'string', description: 'User-friendly explanation of WHY this change is recommended' },
+      changes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            campaign_id: { type: 'string' },
+            keyword: { type: 'string' },
+            ean: { type: 'string' },
+            current_value: { type: 'number' },
+            proposed_value: { type: 'number' },
+            rationale: { type: 'string' },
+          },
+        },
+      },
+      estimated_impact: {
+        type: 'object',
+        properties: {
+          spend_change_pct: { type: 'number' },
+          acos_change_pct: { type: 'number' },
+        },
+      },
+    },
+    required: ['customer_id', 'proposal_type', 'description', 'changes'],
   },
 };
 
@@ -238,6 +408,134 @@ Your job:
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       console.error('[chat/global]', message);
+      return res.status(500).json({ error: message });
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
+  // ── Bol.com chat mode: customer-specific or portfolio ─────────────────────
+  const { bolCustomerId } = body;
+  if (bolCustomerId || (!clientId && messages?.length)) {
+    try {
+      const supabase = createAdminClient();
+
+      // Load memory if customer-specific
+      let memory: Array<{ memory_type: string; content: string }> = [];
+      if (bolCustomerId) {
+        const { data: memoryData } = await supabase
+          .from('agent_memory')
+          .select('memory_type, content')
+          .eq('entity_id', bolCustomerId)
+          .eq('entity_type', 'bol_customer')
+          .eq('is_active', true);
+        memory = memoryData ?? [];
+      }
+
+      const systemPrompt = bolCustomerId
+        ? await buildBolSystemPrompt(bolCustomerId, memory, supabase)
+        : `You are a Bol.com advertising specialist for Follo agency. You have access to all Bol customers' data.
+Use bol_analyze_* tools to analyze performance across customers or for specific customers.`;
+
+      const bolTools = [
+        BOL_ANALYZE_CAMPAIGNS_TOOL,
+        BOL_ANALYZE_PRODUCTS_TOOL,
+        BOL_ANALYZE_COMPETITORS_TOOL,
+        BOL_GET_KEYWORD_RANKINGS_TOOL,
+        BOL_CREATE_PROPOSAL_TOOL,
+      ];
+
+      const bolResponse = await (anthropic.messages.create as Function)({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 4096,
+        system: systemPrompt,
+        tools: bolTools,
+        messages: messages.map((m: { role: string; content: string }) => ({
+          role: m.role,
+          content: m.content,
+        })),
+      });
+
+      // Extract text and tool calls
+      let textContent = '';
+      const toolCalls: Array<{ name: string; input: Record<string, unknown>; id: string }> = [];
+      const toolResults: Array<{ type: string; tool_use_id: string; content: string }> = [];
+
+      for (const block of bolResponse.content) {
+        if (block.type === 'text') {
+          textContent += block.text;
+        } else if (block.type === 'tool_use') {
+          toolCalls.push({
+            name: block.name,
+            input: block.input as Record<string, unknown>,
+            id: block.id,
+          });
+
+          // Execute Bol tool immediately
+          if (block.name.startsWith('bol_')) {
+            const { handleBolTool } = await import('./_lib/bol-agent-tools.js');
+            try {
+              const result = await handleBolTool(block.name, block.input, {
+                bolCustomerId,
+                conversationId,
+              });
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: block.id,
+                content: JSON.stringify(result),
+              });
+            } catch (toolError: unknown) {
+              const errorMsg = toolError instanceof Error ? toolError.message : 'Tool execution failed';
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: block.id,
+                content: JSON.stringify({ error: errorMsg }),
+              });
+            }
+          }
+        }
+      }
+
+      // If we have tool results, make a second call to Claude to get the final response
+      if (toolResults.length > 0) {
+        const followUpResponse = await (anthropic.messages.create as Function)({
+          model: 'claude-sonnet-4-5',
+          max_tokens: 4096,
+          system: systemPrompt,
+          tools: bolTools,
+          messages: [
+            ...messages.map((m: { role: string; content: string }) => ({
+              role: m.role,
+              content: m.content,
+            })),
+            {
+              role: 'assistant',
+              content: bolResponse.content,
+            },
+            {
+              role: 'user',
+              content: toolResults,
+            },
+          ],
+        });
+
+        // Extract final text
+        textContent = '';
+        for (const block of followUpResponse.content) {
+          if (block.type === 'text') {
+            textContent += block.text;
+          }
+        }
+      }
+
+      return res.status(200).json({
+        content: textContent,
+        toolCalls,
+        proposals: [],
+        stopReason: bolResponse.stop_reason,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      console.error('[chat/bol]', message);
       return res.status(500).json({ error: message });
     }
   }

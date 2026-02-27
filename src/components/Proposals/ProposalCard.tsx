@@ -12,17 +12,31 @@ interface Props {
 }
 
 const TYPE_LABELS: Record<string, string> = {
+  // Amazon types
   bid: 'Bid',
   budget: 'Budget',
   keyword: 'Keyword',
   targeting: 'Targeting',
+  // Bol.com types
+  bol_campaign_pause: 'Campaign Pause',
+  bol_campaign_budget: 'Campaign Budget',
+  bol_keyword_bid: 'Keyword Bid',
+  bol_keyword_pause: 'Keyword Pause',
+  bol_price_adjust: 'Price Adjust',
 };
 
 const TYPE_COLORS: Record<string, string> = {
+  // Amazon types
   bid: 'bg-blue-100 text-blue-700',
   budget: 'bg-violet-100 text-violet-700',
   keyword: 'bg-emerald-100 text-emerald-700',
   targeting: 'bg-orange-100 text-orange-700',
+  // Bol.com types
+  bol_campaign_pause: 'bg-orange-100 text-orange-700',
+  bol_campaign_budget: 'bg-violet-100 text-violet-700',
+  bol_keyword_bid: 'bg-blue-100 text-blue-700',
+  bol_keyword_pause: 'bg-red-100 text-red-700',
+  bol_price_adjust: 'bg-emerald-100 text-emerald-700',
 };
 
 const STATUS_STYLES: Record<string, string> = {
@@ -60,6 +74,17 @@ export default function ProposalCard({ proposal, onUpdated }: Props) {
       <div className="p-4">
         <div className="flex items-start justify-between gap-3 mb-2">
           <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Platform badge */}
+            <span
+              className={clsx(
+                'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded',
+                proposal.platform === 'bol'
+                  ? 'bg-orange-50 text-orange-600 border border-orange-200'
+                  : 'bg-slate-50 text-slate-600 border border-slate-200'
+              )}
+            >
+              {proposal.platform === 'bol' ? 'Bol.com' : 'Amazon'}
+            </span>
             <span
               className={clsx(
                 'text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded',

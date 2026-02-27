@@ -58,12 +58,25 @@ export interface ToolCall {
   id: string;
 }
 
-export type ProposalType = 'bid' | 'budget' | 'keyword' | 'targeting';
+export type ProposalType =
+  | 'bid'
+  | 'budget'
+  | 'keyword'
+  | 'targeting'
+  | 'bol_campaign_pause'
+  | 'bol_campaign_budget'
+  | 'bol_keyword_bid'
+  | 'bol_keyword_pause'
+  | 'bol_price_adjust';
+
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'executed';
+export type ProposalPlatform = 'amazon' | 'bol';
 
 export interface OptimizationProposal {
   id: string;
-  client_id: string;
+  platform: ProposalPlatform;
+  client_id: string | null;  // Amazon client (null for Bol proposals)
+  bol_customer_id: string | null;  // Bol customer (null for Amazon proposals)
   market_id: string | null;
   conversation_id: string | null;
   title: string;

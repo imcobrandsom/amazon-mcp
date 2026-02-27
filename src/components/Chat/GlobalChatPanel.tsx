@@ -27,6 +27,12 @@ interface SuggestClientData {
 
 interface Props {
   onClose: () => void;
+  // Bol.com-specific props
+  bolCustomerId?: string;
+  bolFilters?: {
+    dateRange?: { from: string; to: string };
+    campaignState?: string;
+  };
 }
 
 // ── Quick Add Client Card ──────────────────────────────────────────────────────
@@ -177,7 +183,7 @@ function flagEmoji(code: string) {
 
 // ── Main GlobalChatPanel ───────────────────────────────────────────────────────
 
-export default function GlobalChatPanel({ onClose }: Props) {
+export default function GlobalChatPanel({ onClose, bolCustomerId, bolFilters }: Props) {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [input, setInput] = useState('');
@@ -203,7 +209,11 @@ export default function GlobalChatPanel({ onClose }: Props) {
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
     try {
-      const response = await sendGlobalChatMessage({ messages: allPrev });
+      const response = await sendGlobalChatMessage({
+        messages: allPrev,
+        bolCustomerId,
+        bolFilters,
+      });
 
       setMessages([
         ...allPrev,

@@ -24,7 +24,9 @@ import {
   RotateCcw,
   ChevronLeft,
   ChevronRight,
+  MessageCircle,
 } from 'lucide-react';
+import GlobalChatPanel from '../components/Chat/GlobalChatPanel';
 import {
   getBolSummaryForClient,
   getBolCompetitorsForClient,
@@ -2348,6 +2350,7 @@ export default function BolDashboard() {
   const [activeSection, setActiveSection] = useState<NavSection>('overview');
   const [summary, setSummary] = useState<BolCustomerAnalysisSummary | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
+  const [chatOpen, setChatOpen] = useState(false);
 
   useEffect(() => {
     if (!clientId) return;
@@ -2475,6 +2478,27 @@ export default function BolDashboard() {
           )}
         </div>
       </div>
+
+      {/* Floating Chat Button */}
+      {!chatOpen && (
+        <button
+          onClick={() => setChatOpen(true)}
+          className="fixed bottom-6 right-6 w-14 h-14 bg-brand-600 hover:bg-brand-700 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 z-40"
+          title="Chat with AI Assistant"
+        >
+          <MessageCircle size={24} />
+        </button>
+      )}
+
+      {/* Global Chat Panel */}
+      {chatOpen && (
+        <div className="fixed bottom-6 right-6 w-[28rem] h-[36rem] z-50 shadow-2xl rounded-xl overflow-hidden">
+          <GlobalChatPanel
+            onClose={() => setChatOpen(false)}
+            bolCustomerId={bolCustomerId}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -74,8 +74,14 @@ export function sendChatMessage(params: {
 }
 
 // Global chat (no specific client — Claude sees all clients)
+// Can also be used for Bol.com customer-specific chat
 export function sendGlobalChatMessage(params: {
   messages: LocalMessage[];
+  bolCustomerId?: string;
+  bolFilters?: {
+    dateRange?: { from: string; to: string };
+    campaignState?: string;
+  };
 }): Promise<ChatResponse> {
   return post<ChatResponse>('/chat', {
     conversationId: '__global__',
@@ -93,6 +99,9 @@ export function sendGlobalChatMessage(params: {
     },
     memory: [],
     previousSummary: null,
+    // Bol.com-specific fields
+    bolCustomerId: params.bolCustomerId,
+    bolFilters: params.bolFilters,
   });
 }
 
