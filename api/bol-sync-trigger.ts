@@ -181,31 +181,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('bol_customer_id', customer.id)
           .single();
 
-        let dateFrom: string;
-        let dateTo: string;
+        // Determine how many days to fetch (Bol API supports last 30 days)
         const now = new Date();
-        dateTo = now.toISOString().slice(0, 10);
+        let daysToFetch = 30; // API limit
 
         if (!backfillStatus) {
-          // First sync: fetch last 180 days (historical backfill)
-          dateFrom = new Date(now.getTime() - 180 * 86400000).toISOString().slice(0, 10);
-
-          // Insert backfill tracking record
+          // First sync: fetch last 30 days
+          daysToFetch = 30;
+          const oldestDate = new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10);
           await supabase.from('bol_advertising_backfill_status').insert({
             bol_customer_id: customer.id,
             backfill_completed: true,
-            oldest_date_fetched: dateFrom,
+            oldest_date_fetched: oldestDate,
             completed_at: now.toISOString(),
           });
-        } else if (!backfillStatus.backfill_completed) {
-          // Backfill in progress: fetch remaining historical data
-          dateFrom = new Date(now.getTime() - 180 * 86400000).toISOString().slice(0, 10);
         } else {
-          // Regular sync: fetch last 7 days (incremental)
-          dateFrom = new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10);
+          // Incremental sync: fetch last 2 days (yesterday + today)
+          daysToFetch = 2;
         }
 
-        // Ad groups per campaign (max 20)
+        console.log(`[bol-sync-trigger] Fetching ${daysToFetch} days of advertising data...`);
+
+        // Ad groups per campaign (fetch once, reuse for all days)
         const allAdGroups: unknown[] = [];
         for (const campaign of (campaigns as Array<{ campaignId?: string }>).slice(0, 20)) {
           if (campaign.campaignId) {
@@ -214,54 +211,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
 
-        // Advertiser-level performance (for AI analysis blob)
-        const perf = await getAdsPerformance(adsToken, dateFrom, dateTo);
-
-        // ── Per-campaign performance → bol_campaign_performance ─────────────
-        const campaignIds = (campaigns as Array<{ campaignId?: string }>)
-          .filter(c => c.campaignId).map(c => c.campaignId as string);
-        const campPerfSubTotals = await getAdsCampaignPerformance(adsToken, campaignIds, dateFrom, dateTo);
-        const subTotals = campPerfSubTotals as Array<Record<string, unknown>>;
-
-        const campPerfRows = (campaigns as Array<Record<string, unknown>>).map((camp, i) => {
-          const campaignId = camp.campaignId as string;
-          const p = subTotals.find(s => s.entityId === campaignId)
-                 ?? subTotals.find(s => s.campaignId === campaignId)
-                 ?? subTotals[i]
-                 ?? {};
-          const budget = (camp.dailyBudget as Record<string, unknown> | undefined);
-          return {
-            bol_customer_id:    customer.id,
-            campaign_id:        campaignId,
-            campaign_name:      (camp.name as string) ?? null,
-            campaign_type:      (camp.campaignType as string) ?? null,
-            state:              (camp.state as string) ?? null,
-            budget:             budget?.amount ?? null,
-            spend:              p.cost ?? null,
-            impressions:        p.impressions ?? null,
-            clicks:             p.clicks ?? null,
-            ctr_pct:            p.ctr ?? null,
-            avg_cpc:            p.averageCpc ?? null,
-            revenue:            p.sales14d ?? null,
-            roas:               p.roas14d ?? null,
-            acos:               p.acos14d ?? null,
-            conversions:        p.conversions14d ?? null,
-            cvr_pct:            p.conversionRate14d ?? null,
-            period_start_date:  dateFrom,
-            period_end_date:    dateTo,
-          };
-        });
-
-        if (campPerfRows.length > 0) {
-          const { error: campInsertError } = await supabase.from('bol_campaign_performance').insert(campPerfRows);
-          if (campInsertError) {
-            console.error('[bol-sync-trigger] Failed to insert campaign performance:', campInsertError);
-          } else {
-            console.log(`[bol-sync-trigger] Inserted ${campPerfRows.length} campaign performance rows`);
-          }
-        }
-
-        // ── Keywords + per-keyword performance → bol_keyword_performance ────
+        // Fetch keywords once (reuse for all days)
         const allKeywords: Array<Record<string, unknown>> = [];
         for (const adGroup of (allAdGroups as Array<{ adGroupId?: string }>).slice(0, 40)) {
           if (adGroup.adGroupId) {
@@ -271,46 +221,117 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
 
-        if (allKeywords.length > 0) {
-          const keywordIds = allKeywords.filter(k => k.keywordId).map(k => k.keywordId as string);
-          const kwSubTotals = (await getAdsKeywordPerformance(adsToken, keywordIds, dateFrom, dateTo)) as Array<Record<string, unknown>>;
+        const campaignIds = (campaigns as Array<{ campaignId?: string }>)
+          .filter(c => c.campaignId).map(c => c.campaignId as string);
+        const keywordIds = allKeywords.filter(k => k.keywordId).map(k => k.keywordId as string);
 
-          const kwPerfRows = allKeywords.map((kw, i) => {
-            const keywordId = kw.keywordId as string;
-            const p = kwSubTotals.find(s => s.entityId === keywordId)
-                   ?? kwSubTotals.find(s => s.keywordId === keywordId)
-                   ?? kwSubTotals[i]
-                   ?? {};
-            const bid = (kw.bid as Record<string, unknown> | undefined);
-            return {
-              bol_customer_id:    customer.id,
-              keyword_id:         keywordId,
-              keyword_text:       (kw.keywordText as string) ?? null,
-              match_type:         (kw.matchType as string) ?? null,
-              campaign_id:        kw.campaignId as string,
-              ad_group_id:        (kw.adGroupId as string) ?? null,
-              bid:                bid?.amount ?? null,
-              state:              (kw.state as string) ?? null,
-              spend:              p.cost ?? null,
-              impressions:        p.impressions ?? null,
-              clicks:             p.clicks ?? null,
-              revenue:            p.sales14d ?? null,
-              acos:               p.acos14d ?? null,
-              conversions:        p.conversions14d ?? null,
-              period_start_date:  dateFrom,
-              period_end_date:    dateTo,
-            };
-          });
+        // Collect all rows to bulk insert at the end
+        const allCampRows: Array<Record<string, unknown>> = [];
+        const allKwRows: Array<Record<string, unknown>> = [];
 
-          const { error: kwInsertError } = await supabase.from('bol_keyword_performance').insert(kwPerfRows);
-          if (kwInsertError) {
-            console.error('[bol-sync-trigger] Failed to insert keyword performance:', kwInsertError);
-          } else {
-            console.log(`[bol-sync-trigger] Inserted ${kwPerfRows.length} keyword performance rows`);
+        // ── Fetch data day-by-day to build proper time-series ────────────────
+        for (let dayOffset = daysToFetch - 1; dayOffset >= 0; dayOffset--) {
+          const date = new Date(now.getTime() - dayOffset * 86400000).toISOString().slice(0, 10);
+          console.log(`[bol-sync-trigger] Fetching data for ${date}...`);
+
+          try {
+            // Fetch campaign performance for this specific day
+            const campPerfSubTotals = await getAdsCampaignPerformance(adsToken, campaignIds, date, date);
+            const campSubTotals = campPerfSubTotals as Array<Record<string, unknown>>;
+
+            // Create rows for each campaign
+            for (const camp of campaigns as Array<Record<string, unknown>>) {
+              const campaignId = camp.campaignId as string;
+              const p = campSubTotals.find(s => s.entityId === campaignId)
+                     ?? campSubTotals.find(s => s.campaignId === campaignId)
+                     ?? {};
+              const budget = camp.dailyBudget as Record<string, unknown> | undefined;
+
+              allCampRows.push({
+                bol_customer_id:    customer.id,
+                campaign_id:        campaignId,
+                campaign_name:      (camp.name as string) ?? null,
+                campaign_type:      (camp.campaignType as string) ?? null,
+                state:              (camp.state as string) ?? null,
+                budget:             budget?.amount ?? null,
+                spend:              p.cost ?? null,
+                impressions:        p.impressions ?? null,
+                clicks:             p.clicks ?? null,
+                ctr_pct:            p.ctr ?? null,
+                avg_cpc:            p.averageCpc ?? null,
+                revenue:            p.sales14d ?? null,
+                roas:               p.roas14d ?? null,
+                acos:               p.acos14d ?? null,
+                conversions:        p.conversions14d ?? null,
+                cvr_pct:            p.conversionRate14d ?? null,
+                period_start_date:  date,  // Single day
+                period_end_date:    date,  // Single day
+              });
+            }
+
+            // Fetch keyword performance for this specific day
+            if (keywordIds.length > 0) {
+              const kwPerfSubTotals = await getAdsKeywordPerformance(adsToken, keywordIds, date, date);
+              const kwSubTotals = kwPerfSubTotals as Array<Record<string, unknown>>;
+
+              for (const kw of allKeywords) {
+                const keywordId = kw.keywordId as string;
+                const p = kwSubTotals.find(s => s.entityId === keywordId)
+                       ?? kwSubTotals.find(s => s.keywordId === keywordId)
+                       ?? {};
+                const bid = kw.bid as Record<string, unknown> | undefined;
+
+                allKwRows.push({
+                  bol_customer_id:    customer.id,
+                  keyword_id:         keywordId,
+                  keyword_text:       (kw.keywordText as string) ?? null,
+                  match_type:         (kw.matchType as string) ?? null,
+                  campaign_id:        kw.campaignId as string,
+                  ad_group_id:        (kw.adGroupId as string) ?? null,
+                  bid:                bid?.amount ?? null,
+                  state:              (kw.state as string) ?? null,
+                  spend:              p.cost ?? null,
+                  impressions:        p.impressions ?? null,
+                  clicks:             p.clicks ?? null,
+                  revenue:            p.sales14d ?? null,
+                  acos:               p.acos14d ?? null,
+                  conversions:        p.conversions14d ?? null,
+                  period_start_date:  date,  // Single day
+                  period_end_date:    date,  // Single day
+                });
+              }
+            }
+
+            await sleep(200); // Rate limit between days
+          } catch (dayError) {
+            console.error(`[bol-sync-trigger] Failed to fetch data for ${date}:`, dayError);
+            // Continue with next day
           }
         }
 
-        // ── AI analysis blob (unchanged) ─────────────────────────────────────
+        // Bulk insert all campaign performance rows
+        if (allCampRows.length > 0) {
+          const { error: campInsertError } = await supabase.from('bol_campaign_performance').insert(allCampRows);
+          if (campInsertError) {
+            console.error('[bol-sync-trigger] Failed to insert campaign performance:', campInsertError);
+          } else {
+            console.log(`[bol-sync-trigger] Inserted ${allCampRows.length} campaign performance rows`);
+          }
+        }
+
+        // Bulk insert all keyword performance rows
+        if (allKwRows.length > 0) {
+          const { error: kwInsertError } = await supabase.from('bol_keyword_performance').insert(allKwRows);
+          if (kwInsertError) {
+            console.error('[bol-sync-trigger] Failed to insert keyword performance:', kwInsertError);
+          } else {
+            console.log(`[bol-sync-trigger] Inserted ${allKwRows.length} keyword performance rows`);
+          }
+        }
+
+        // ── AI analysis blob (use last day's performance) ─────────────────────
+        const today = now.toISOString().slice(0, 10);
+        const perf = await getAdsPerformance(adsToken, today, today);
         const analysis = analyzeAdvertising(campaigns, allAdGroups, perf);
         const { data: snap } = await supabase.from('bol_raw_snapshots').insert({
           bol_customer_id: customer.id,
