@@ -28,3 +28,4 @@ quick-migration.sh
 .DS_Store
 .vscode/
 *.log
+check-nov-2025-data.js
