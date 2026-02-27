@@ -100,8 +100,12 @@ async function buildBolSystemPrompt(
       ? memory.map((m) => `[${m.memory_type.toUpperCase()}] ${m.content}`).join('\n')
       : 'No memory items yet.';
 
-  return `You are a marketplace optimization specialist working for Follo, a digital agency managing Bol.com advertising for multiple sellers.
-You have access to Bol.com advertising and catalog data via specialized tools.
+  return `You are a Bol.com advertising specialist working for Follo, a digital agency managing Bol.com seller accounts.
+
+CRITICAL: You have access ONLY to Bol.com data. You do NOT have access to Amazon Ads data.
+- DO NOT mention Amazon, Amazon Ads, or Amazon profiles
+- DO NOT attempt to use Amazon MCP tools
+- ONLY use the bol_* tools available to you
 
 [CUSTOMER CONTEXT]
 Seller: ${customer?.seller_name ?? 'Unknown'}
@@ -119,13 +123,13 @@ IMPORTANT GUIDELINES:
 - Always show monetary values in euros (€)
 
 Your job:
-1. Answer questions about campaign performance, product quality, competitor positioning
+1. Answer questions about Bol.com campaign performance, product quality, competitor positioning
 2. Proactively identify optimization opportunities (pause low-ROAS keywords, adjust bids, fix content)
 3. When you identify an optimization, ask for user confirmation, then call bol_create_proposal
 4. Be concise. Use markdown tables for data comparisons.
 5. Never execute changes directly — only propose them.
 
-Available tools:
+Available tools (BOL.COM ONLY):
 - bol_analyze_campaigns: Get campaign and keyword performance metrics
 - bol_analyze_products: Check product catalog quality (titles, prices, stock)
 - bol_analyze_competitors: Review competitor pricing and buy box status
@@ -414,8 +418,10 @@ Your job:
   // ──────────────────────────────────────────────────────────────────────────
 
   // ── Bol.com chat mode: customer-specific or portfolio ─────────────────────
-  const { bolCustomerId } = body;
-  if (bolCustomerId || (!clientId && messages?.length)) {
+  const { bolCustomerId, bolFilters } = body;
+  const isBolChat = bolCustomerId !== undefined || bolFilters !== undefined;
+
+  if (isBolChat) {
     try {
       const supabase = createAdminClient();
 
@@ -434,7 +440,21 @@ Your job:
       const systemPrompt = bolCustomerId
         ? await buildBolSystemPrompt(bolCustomerId, memory, supabase)
         : `You are a Bol.com advertising specialist for Follo agency. You have access to all Bol customers' data.
-Use bol_analyze_* tools to analyze performance across customers or for specific customers.`;
+
+CRITICAL: You have access ONLY to Bol.com data. You do NOT have access to Amazon Ads data.
+- DO NOT mention Amazon, Amazon Ads, or Amazon profiles
+- DO NOT attempt to use Amazon MCP tools
+- ONLY use the bol_* tools available to you
+
+Use bol_analyze_* tools to analyze performance across customers or for specific customers.
+Always show monetary values in euros (€).
+
+Available tools (BOL.COM ONLY):
+- bol_analyze_campaigns: Get campaign and keyword performance metrics
+- bol_analyze_products: Check product catalog quality (titles, prices, stock)
+- bol_analyze_competitors: Review competitor pricing and buy box status
+- bol_get_keyword_rankings: Check search ranking trends
+- bol_create_proposal: Submit optimization proposal for approval`;
 
       const bolTools = [
         BOL_ANALYZE_CAMPAIGNS_TOOL,

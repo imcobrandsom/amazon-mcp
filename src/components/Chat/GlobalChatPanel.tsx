@@ -242,7 +242,7 @@ export default function GlobalChatPanel({
       const response = await sendGlobalChatMessage({
         messages: allPrev,
         bolCustomerId,
-        bolFilters,
+        bolFilters: isBolMode ? (bolFilters || {}) : undefined,
       });
 
       setMessages([
