@@ -73,6 +73,7 @@ export interface BolProduct {
   fulfilmentType: 'FBB' | 'FBR' | null;
   stockAmount: number | null;
   onHold: boolean;
+  eol: boolean;  // End of Life flag (manual)
 }
 
 // ── Campaign / keyword time-series ────────────────────────────────────────────

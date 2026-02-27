@@ -28,6 +28,7 @@ import {
   getBolCompetitorsForClient,
   getBolKeywordsForClient,
   getBolProducts,
+  updateProductMetadata,
   getBolCampaignsForClient,
   getBolCampaignChart,
   triggerSync,
@@ -398,6 +399,8 @@ function ProductsSection({
   const [sortDir, setSortDir]       = useState<SortDir>('asc');
   const [pageSize, setPageSize]     = useState<25 | 50 | 100>(25);
   const [page, setPage]             = useState(0);
+  const [selectedFulfillment, setSelectedFulfillment] = useState<('FBB' | 'FBR')[]>([]);
+  const [showEOL, setShowEOL]       = useState<'all' | 'active' | 'eol'>('active');
 
   useEffect(() => {
     if (!bolCustomerId) return;
@@ -418,10 +421,42 @@ function ProductsSection({
     }
   };
 
+  const handleToggleEOL = async (ean: string, currentEOL: boolean) => {
+    if (!bolCustomerId) return;
+
+    try {
+      await updateProductMetadata(bolCustomerId, ean, !currentEOL);
+
+      // Optimistically update local state
+      setProducts(prev => prev?.map(p =>
+        p.ean === ean ? { ...p, eol: !currentEOL } : p
+      ) ?? null);
+    } catch (err) {
+      console.error('Failed to toggle EOL:', err);
+      // Optionally show error toast
+    }
+  };
+
   const filtered = (products ?? []).filter(p => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (p.title ?? '').toLowerCase().includes(q) || p.ean.includes(q);
+    // Search filter
+    if (search) {
+      const q = search.toLowerCase();
+      const matchesSearch = (p.title ?? '').toLowerCase().includes(q) || p.ean.includes(q);
+      if (!matchesSearch) return false;
+    }
+
+    // Fulfillment type filter
+    if (selectedFulfillment.length > 0) {
+      if (!p.fulfilmentType || !selectedFulfillment.includes(p.fulfilmentType)) {
+        return false;
+      }
+    }
+
+    // EOL filter
+    if (showEOL === 'active' && p.eol) return false;
+    if (showEOL === 'eol' && !p.eol) return false;
+
+    return true;
   });
 
   const sorted = [...filtered].sort((a, b) => {
@@ -601,17 +636,7 @@ function ProductsSection({
         </div>
       </div>
 
-      {/* Description quality placeholder — catalog API sync not yet enabled */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100">
-          <h3 className="text-sm font-semibold text-slate-800">Description Quality</h3>
-          <p className="text-xs text-slate-400 mt-0.5">Product descriptions from bol.com catalog API</p>
-        </div>
-        <div className="px-4 py-6 text-center space-y-1">
-          <p className="text-xs text-slate-400">Description data is not yet available.</p>
-          <p className="text-xs text-slate-300">Enable catalog sync to see description quality metrics.</p>
-        </div>
-      </div>
+      {/* Description quality section — only shown when catalog analysis is available (future feature) */}
 
       {/* Offer insights table */}
       {hasInsights && (
@@ -655,33 +680,79 @@ function ProductsSection({
 
       {/* All products table */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-800">All products</h3>
-            <p className="text-xs text-slate-400 mt-0.5">From latest inventory + listings sync</p>
+        <div className="px-4 py-3 border-b border-slate-100">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-800">All products</h3>
+              <p className="text-xs text-slate-400 mt-0.5">From latest inventory + listings sync</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {/* Per-page selector */}
+              <div className="flex items-center gap-1">
+                {([25, 50, 100] as const).map(n => (
+                  <button
+                    key={n}
+                    onClick={() => setPageSize(n)}
+                    className={clsx('px-2 py-1 rounded border text-[11px] leading-none',
+                      pageSize === n
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                    )}
+                  >{n}</button>
+                ))}
+              </div>
+              <input
+                type="text"
+                placeholder="Search title or EAN…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 w-52 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              />
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {/* Per-page selector */}
-            <div className="flex items-center gap-1">
-              {([25, 50, 100] as const).map(n => (
+
+          {/* Filters row */}
+          <div className="flex items-center gap-4">
+            {/* Fulfillment type filter */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 font-medium">Fulfillment:</span>
+              <button
+                onClick={() => setSelectedFulfillment(prev =>
+                  prev.includes('FBB') ? prev.filter(f => f !== 'FBB') : [...prev, 'FBB']
+                )}
+                className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium transition-colors',
+                  selectedFulfillment.includes('FBB')
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                )}
+              >FBB</button>
+              <button
+                onClick={() => setSelectedFulfillment(prev =>
+                  prev.includes('FBR') ? prev.filter(f => f !== 'FBR') : [...prev, 'FBR']
+                )}
+                className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium transition-colors',
+                  selectedFulfillment.includes('FBR')
+                    ? 'bg-slate-700 text-white border-slate-700'
+                    : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                )}
+              >FBR</button>
+            </div>
+
+            {/* EOL status filter */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 font-medium">Status:</span>
+              {(['all', 'active', 'eol'] as const).map(status => (
                 <button
-                  key={n}
-                  onClick={() => setPageSize(n)}
-                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none',
-                    pageSize === n
+                  key={status}
+                  onClick={() => setShowEOL(status)}
+                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium transition-colors capitalize',
+                    showEOL === status
                       ? 'bg-blue-600 text-white border-blue-600'
                       : 'border-slate-200 text-slate-500 hover:border-slate-400'
                   )}
-                >{n}</button>
+                >{status}</button>
               ))}
             </div>
-            <input
-              type="text"
-              placeholder="Search title or EAN…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 w-52 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-            />
           </div>
         </div>
 
@@ -731,6 +802,7 @@ function ProductsSection({
                     Stock <SortArrow col="regularStock" />
                   </th>
                   <th className="px-4 py-2 text-center font-semibold text-slate-500">Hold</th>
+                  <th className="px-4 py-2 text-center font-semibold text-slate-500">EOL</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -773,6 +845,17 @@ function ProductsSection({
                       {p.onHold ? (
                         <span className="inline-block w-2 h-2 rounded-full bg-red-500" title="On hold by retailer" />
                       ) : null}
+                    </td>
+                    <td
+                      className="px-4 py-2.5 text-center cursor-pointer hover:bg-slate-50"
+                      onClick={() => handleToggleEOL(p.ean, p.eol)}
+                      title="Click to toggle EOL status"
+                    >
+                      {p.eol ? (
+                        <span className="inline-block w-2 h-2 rounded-full bg-red-500" title="End of Life" />
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
                     </td>
                   </tr>
                 ))}

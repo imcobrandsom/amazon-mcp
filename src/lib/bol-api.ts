@@ -147,6 +147,18 @@ export function getBolProducts(customerId: string): Promise<{ products: BolProdu
   return apiFetch(`/bol-products?customerId=${customerId}`);
 }
 
+export function updateProductMetadata(
+  customerId: string,
+  ean: string,
+  eol: boolean
+): Promise<{ success: boolean; data?: unknown }> {
+  return apiFetch('/bol-product-metadata', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customerId, ean, eol }),
+  });
+}
+
 // ── Competitor data ───────────────────────────────────────────────────────────
 
 export async function getBolCompetitorsForClient(
