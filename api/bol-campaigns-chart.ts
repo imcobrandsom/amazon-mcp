@@ -1,5 +1,6 @@
 /**
  * GET /api/bol-campaigns-chart?customerId=<uuid>&days=30
+ * GET /api/bol-campaigns-chart?customerId=<uuid>&from=2025-01-01&to=2025-12-31
  * Returns daily-aggregated advertising metrics for the given date range.
  * Unlike /api/bol-campaigns (which deduplicates), this returns ALL rows so
  * we can build a time-series chart.
@@ -10,12 +11,20 @@ import { createAdminClient } from './_lib/supabase-admin.js';
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
 
-  const { customerId, days } = req.query;
+  const { customerId, days, from, to } = req.query;
   if (!customerId || typeof customerId !== 'string')
     return res.status(400).json({ error: 'customerId required' });
 
-  const numDays = Math.min(parseInt(String(days ?? '30'), 10) || 30, 90);
-  const since = new Date(Date.now() - numDays * 86_400_000).toISOString();
+  let since: string;
+
+  if (from && to && typeof from === 'string' && typeof to === 'string') {
+    // Custom date range
+    since = new Date(from).toISOString();
+  } else {
+    // Legacy: days parameter (max 365 for historical data)
+    const numDays = Math.min(parseInt(String(days ?? '30'), 10) || 30, 365);
+    since = new Date(Date.now() - numDays * 86_400_000).toISOString();
+  }
 
   const supabase = createAdminClient();
   const { data, error } = await supabase

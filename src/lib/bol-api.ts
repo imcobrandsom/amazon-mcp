@@ -125,20 +125,36 @@ export async function getBolSummaryForClient(clientId: string): Promise<BolCusto
 
 // ── Campaign + keyword time-series ────────────────────────────────────────────
 
-export function getBolCampaignsForClient(customerId: string): Promise<{
+export function getBolCampaignsForClient(
+  customerId: string,
+  dateRange?: { from: string; to: string }
+): Promise<{
   campaigns: BolCampaignPerformance[];
   keywords: BolKeywordPerformance[];
   count: number;
 }> {
-  return apiFetch(`/bol-campaigns?customerId=${customerId}`);
+  let url = `/bol-campaigns?customerId=${customerId}`;
+  if (dateRange) {
+    url += `&from=${dateRange.from}&to=${dateRange.to}`;
+  }
+  return apiFetch(url);
 }
 
 // ── Campaign chart (daily aggregated time-series) ─────────────────────────────
 
-export function getBolCampaignChart(customerId: string, days: 7 | 14 | 30 | 90): Promise<{
+export function getBolCampaignChart(
+  customerId: string,
+  daysOrDateRange: number | { from: string; to: string }
+): Promise<{
   points: BolCampaignChartPoint[];
 }> {
-  return apiFetch(`/bol-campaigns-chart?customerId=${customerId}&days=${days}`);
+  if (typeof daysOrDateRange === 'number') {
+    return apiFetch(`/bol-campaigns-chart?customerId=${customerId}&days=${daysOrDateRange}`);
+  } else {
+    return apiFetch(
+      `/bol-campaigns-chart?customerId=${customerId}&from=${daysOrDateRange.from}&to=${daysOrDateRange.to}`
+    );
+  }
 }
 
 // ── Products (inventory + listings join) ──────────────────────────────────────

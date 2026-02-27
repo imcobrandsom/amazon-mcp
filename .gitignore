@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Production
+dist/
+
+# Environment
+.env
+.env.local
+
+# Vercel
+.vercel/
+
+# Scripts
+trigger-backfill.js
+check-campaign-data.js
+test-api-endpoint.js
+
+# IDE
+.DS_Store
+.vscode/
+*.log

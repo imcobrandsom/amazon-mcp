@@ -1066,7 +1066,6 @@ function OrdersSection({ analysis }: { analysis: BolAnalysis | null }) {
 
 // ── Campaign Section ───────────────────────────────────────────────────────────
 
-type ChartDays   = 7 | 14 | 30 | 90;
 type ChartMetric = 'spend' | 'revenue' | 'roas' | 'acos' | 'tacos' | 'ctr_pct' | 'conversions';
 
 function CampaignSection({
@@ -1093,7 +1092,6 @@ function CampaignSection({
   useEffect(() => { setKwPage(0); }, [kwPageSize]);
 
   // Chart state
-  const [chartDays, setChartDays]         = useState<ChartDays>(30);
   const [selectedMetrics, setSelectedMetrics] = useState<ChartMetric[]>(['spend', 'roas']);
   const [chartData, setChartData]         = useState<BolCampaignChartPoint[] | null>(null);
   const [chartLoading, setChartLoading]   = useState(false);
@@ -1117,22 +1115,29 @@ function CampaignSection({
   const [kwHasConversions, setKwHasConversions] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (!bolCustomerId) return;
+    if (!bolCustomerId || !dateRangeStart || !dateRangeEnd) return;
     setLoading(true);
-    getBolCampaignsForClient(bolCustomerId)
+    getBolCampaignsForClient(bolCustomerId, {
+      from: dateRangeStart.toISOString().slice(0, 10),
+      to: dateRangeEnd.toISOString().slice(0, 10),
+    })
       .then(r => setCampData({ campaigns: r.campaigns, keywords: r.keywords }))
       .catch(() => setCampData({ campaigns: [], keywords: [] }))
       .finally(() => setLoading(false));
-  }, [bolCustomerId]);
+  }, [bolCustomerId, dateRangeStart, dateRangeEnd]);
 
   useEffect(() => {
-    if (!bolCustomerId) return;
+    if (!bolCustomerId || !dateRangeStart || !dateRangeEnd) return;
     setChartLoading(true);
-    getBolCampaignChart(bolCustomerId, chartDays)
+
+    getBolCampaignChart(bolCustomerId, {
+      from: dateRangeStart.toISOString().slice(0, 10),
+      to: dateRangeEnd.toISOString().slice(0, 10),
+    })
       .then(r => setChartData(r.points))
       .catch(() => setChartData([]))
       .finally(() => setChartLoading(false));
-  }, [bolCustomerId, chartDays]);
+  }, [bolCustomerId, dateRangeStart, dateRangeEnd]);
 
   // ── Aggregate metrics computed from live campData (accurate vs stale analysis.findings) ──
   const campMetrics = useMemo(() => {
@@ -1280,7 +1285,6 @@ function CampaignSection({
                   onClick={() => {
                     setDateRangeEnd(new Date());
                     setDateRangeStart(new Date(Date.now() - days * 86400000));
-                    setChartDays(days as ChartDays);
                   }}
                   className="px-2 py-1 rounded border text-[11px] border-slate-200 text-slate-500 hover:border-slate-400"
                 >
