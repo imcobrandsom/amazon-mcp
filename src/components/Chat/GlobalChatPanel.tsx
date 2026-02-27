@@ -1,15 +1,28 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, X, RefreshCcw, Bot, Plus, Check, ChevronRight } from 'lucide-react';
+import { Send, X, RefreshCcw, Bot, Plus, Check, ChevronRight, Minus, ShoppingBag } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { LocalMessage } from '../../types';
 import MessageBubble from './MessageBubble';
 import { sendGlobalChatMessage } from '../../lib/api';
 import { supabase } from '../../lib/supabase';
 
-const SUGGESTED = [
+const SUGGESTED_AMAZON = [
   'Which client has the highest ROAS this week?',
   'Compare NL campaigns across all clients',
   'Show underperforming campaigns portfolio-wide',
+];
+
+const SUGGESTED_BOL = [
+  'What is my total ad spend this month?',
+  'Which campaigns have ACOS > 30%?',
+  'Show me products with missing descriptions',
+  'Identify keywords losing buy box position',
+];
+
+const SUGGESTED_BOL_GLOBAL = [
+  'Which Bol customers are underperforming in ads?',
+  'Compare ACOS across all Bol customers',
+  'Show top spending Bol customers this month',
 ];
 
 interface SuggestedMarket {
@@ -25,10 +38,18 @@ interface SuggestClientData {
   markets: SuggestedMarket[];
 }
 
+interface BolCustomerOption {
+  id: string;
+  name: string;
+}
+
 interface Props {
   onClose: () => void;
+  onMinimize?: () => void;
   // Bol.com-specific props
   bolCustomerId?: string;
+  bolCustomers?: BolCustomerOption[];
+  onBolCustomerChange?: (customerId: string | undefined) => void;
   bolFilters?: {
     dateRange?: { from: string; to: string };
     campaignState?: string;
@@ -183,7 +204,14 @@ function flagEmoji(code: string) {
 
 // ── Main GlobalChatPanel ───────────────────────────────────────────────────────
 
-export default function GlobalChatPanel({ onClose, bolCustomerId, bolFilters }: Props) {
+export default function GlobalChatPanel({
+  onClose,
+  onMinimize,
+  bolCustomerId,
+  bolCustomers = [],
+  onBolCustomerChange,
+  bolFilters
+}: Props) {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [input, setInput] = useState('');
@@ -191,6 +219,8 @@ export default function GlobalChatPanel({ onClose, bolCustomerId, bolFilters }: 
   const [suggestData, setSuggestData] = useState<SuggestClientData | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const isBolMode = bolCustomerId !== undefined || bolCustomers.length > 0;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -261,44 +291,110 @@ export default function GlobalChatPanel({ onClose, bolCustomerId, bolFilters }: 
     navigate(`/clients/${clientId}`);
   };
 
+  // Get suggested questions based on mode
+  const suggestedQuestions = isBolMode
+    ? (bolCustomerId ? SUGGESTED_BOL : SUGGESTED_BOL_GLOBAL)
+    : SUGGESTED_AMAZON;
+
+  // Get selected customer name
+  const selectedCustomerName = bolCustomerId
+    ? bolCustomers.find(c => c.id === bolCustomerId)?.name
+    : undefined;
+
   return (
     <div className="fixed inset-y-0 right-0 w-[480px] bg-white border-l border-slate-200 shadow-2xl z-50 flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 flex-shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-full bg-brand-50 flex items-center justify-center">
-            <Bot size={14} className="text-brand-500" />
+        <div className="flex items-center gap-2.5 flex-1 min-w-0">
+          <div className={`w-7 h-7 rounded-full ${isBolMode ? 'bg-orange-50' : 'bg-brand-50'} flex items-center justify-center flex-shrink-0`}>
+            {isBolMode ? (
+              <ShoppingBag size={14} className="text-orange-500" />
+            ) : (
+              <Bot size={14} className="text-brand-500" />
+            )}
           </div>
-          <div>
-            <p className="text-sm font-semibold text-slate-900">General Chat</p>
-            <p className="text-[10px] text-slate-400">All clients · Amazon Ads</p>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-slate-900">
+              {isBolMode ? 'Bol.com AI Assistant' : 'General Chat'}
+            </p>
+            <p className="text-[10px] text-slate-400 truncate">
+              {isBolMode
+                ? (selectedCustomerName || 'All Bol customers')
+                : 'All clients · Amazon Ads'}
+            </p>
           </div>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors"
-        >
-          <X size={16} />
-        </button>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {onMinimize && (
+            <button
+              onClick={onMinimize}
+              className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors"
+              title="Minimize"
+            >
+              <Minus size={16} />
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors"
+            title="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
       </div>
+
+      {/* Customer Selector for Bol mode */}
+      {isBolMode && bolCustomers.length > 0 && onBolCustomerChange && (
+        <div className="px-4 py-2.5 border-b border-slate-100 flex-shrink-0 bg-slate-50">
+          <label className="block text-[10px] font-medium text-slate-500 uppercase tracking-wide mb-1.5">
+            Focus on customer
+          </label>
+          <select
+            value={bolCustomerId || ''}
+            onChange={(e) => {
+              onBolCustomerChange(e.target.value || undefined);
+              setMessages([]); // Clear messages when switching context
+            }}
+            className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-orange-400"
+          >
+            <option value="">All Bol customers</option>
+            {bolCustomers.map((customer) => (
+              <option key={customer.id} value={customer.id}>
+                {customer.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center py-8">
-            <div className="w-12 h-12 rounded-full bg-brand-50 flex items-center justify-center mb-3">
-              <Bot size={22} className="text-brand-400" />
+            <div className={`w-12 h-12 rounded-full ${isBolMode ? 'bg-orange-50' : 'bg-brand-50'} flex items-center justify-center mb-3`}>
+              {isBolMode ? (
+                <ShoppingBag size={22} className="text-orange-400" />
+              ) : (
+                <Bot size={22} className="text-brand-400" />
+              )}
             </div>
-            <p className="text-sm font-medium text-slate-700">Ask about any client</p>
+            <p className="text-sm font-medium text-slate-700">
+              {isBolMode ? 'Ask about Bol.com data' : 'Ask about any client'}
+            </p>
             <p className="text-xs text-slate-400 mt-1 max-w-[280px] leading-relaxed">
-              Query campaigns, compare performance, or spot opportunities across the full portfolio.
+              {isBolMode
+                ? (bolCustomerId
+                    ? 'Get insights on campaigns, products, competitors, and keyword rankings.'
+                    : 'Query performance across all Bol customers or select a specific customer above.')
+                : 'Query campaigns, compare performance, or spot opportunities across the full portfolio.'}
             </p>
             <div className="mt-5 flex flex-col gap-2 w-full max-w-xs">
-              {SUGGESTED.map((q) => (
+              {suggestedQuestions.map((q) => (
                 <button
                   key={q}
                   onClick={() => handleSend(q)}
-                  className="text-left text-xs text-brand-600 bg-brand-50 hover:bg-brand-100 px-3 py-2 rounded-lg transition-colors leading-snug"
+                  className={`text-left text-xs ${isBolMode ? 'text-orange-600 bg-orange-50 hover:bg-orange-100' : 'text-brand-600 bg-brand-50 hover:bg-brand-100'} px-3 py-2 rounded-lg transition-colors leading-snug`}
                 >
                   {q}
                 </button>
@@ -333,15 +429,15 @@ export default function GlobalChatPanel({ onClose, bolCustomerId, bolFilters }: 
               e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about any client or campaign…"
-            className="flex-1 resize-none px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent min-h-[40px] max-h-[120px] leading-relaxed"
+            placeholder={isBolMode ? "Ask about campaigns, products, competitors…" : "Ask about any client or campaign…"}
+            className={`flex-1 resize-none px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 ${isBolMode ? 'focus:ring-orange-400' : 'focus:ring-brand-400'} focus:border-transparent min-h-[40px] max-h-[120px] leading-relaxed`}
             rows={1}
             disabled={sending}
           />
           <button
             onClick={() => handleSend()}
             disabled={!input.trim() || sending}
-            className="flex-shrink-0 w-9 h-9 flex items-center justify-center bg-brand-500 hover:bg-brand-600 text-white rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className={`flex-shrink-0 w-9 h-9 flex items-center justify-center ${isBolMode ? 'bg-orange-500 hover:bg-orange-600' : 'bg-brand-500 hover:bg-brand-600'} text-white rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors`}
           >
             {sending ? <RefreshCcw size={14} className="animate-spin" /> : <Send size={14} />}
           </button>

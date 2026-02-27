@@ -36,6 +36,7 @@ import {
   getBolCampaignsForClient,
   getBolCampaignChart,
   triggerSync,
+  listBolCustomers,
   type BolSyncType,
 } from '../lib/bol-api';
 import type {
@@ -2351,7 +2352,11 @@ export default function BolDashboard() {
   const [summary, setSummary] = useState<BolCustomerAnalysisSummary | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatMinimized, setChatMinimized] = useState(false);
+  const [allBolCustomers, setAllBolCustomers] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedChatCustomerId, setSelectedChatCustomerId] = useState<string | undefined>(undefined);
 
+  // Load summary for the specific client
   useEffect(() => {
     if (!clientId) return;
     setLoading(true);
@@ -2367,6 +2372,29 @@ export default function BolDashboard() {
   const clientName = (summary?.customer as { clients?: { name?: string } })?.clients?.name ?? 'Client';
   const sellerName = summary?.customer?.seller_name ?? '';
   const bolCustomerId = summary?.customer?.id ?? '';
+
+  // Load all Bol customers for chat dropdown
+  useEffect(() => {
+    listBolCustomers()
+      .then(({ customers }) => {
+        setAllBolCustomers(
+          customers.map(c => ({
+            id: c.id,
+            name: c.seller_name || 'Unknown Seller',
+          }))
+        );
+      })
+      .catch((err) => {
+        console.error('[BolDashboard] listBolCustomers failed:', err);
+      });
+  }, []);
+
+  // When opening chat, set initial customer to current one if available
+  useEffect(() => {
+    if (chatOpen && bolCustomerId && !selectedChatCustomerId) {
+      setSelectedChatCustomerId(bolCustomerId);
+    }
+  }, [chatOpen, bolCustomerId, selectedChatCustomerId]);
 
   return (
     <div className="flex h-full flex-col">
@@ -2480,24 +2508,46 @@ export default function BolDashboard() {
       </div>
 
       {/* Floating Chat Button */}
-      {!chatOpen && (
+      {!chatOpen && !chatMinimized && (
         <button
           onClick={() => setChatOpen(true)}
-          className="fixed bottom-6 right-6 w-14 h-14 bg-brand-600 hover:bg-brand-700 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 z-40"
-          title="Chat with AI Assistant"
+          className="fixed bottom-6 right-6 w-14 h-14 bg-orange-500 hover:bg-orange-600 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 z-40"
+          title="Chat with Bol.com AI Assistant"
         >
           <MessageCircle size={24} />
         </button>
       )}
 
+      {/* Minimized Chat Badge */}
+      {chatMinimized && (
+        <button
+          onClick={() => {
+            setChatMinimized(false);
+            setChatOpen(true);
+          }}
+          className="fixed bottom-6 right-6 bg-orange-500 hover:bg-orange-600 text-white px-4 py-3 rounded-full shadow-lg flex items-center gap-2 transition-all hover:scale-105 z-40"
+          title="Restore chat"
+        >
+          <MessageCircle size={18} />
+          <span className="text-sm font-medium">Bol.com AI</span>
+        </button>
+      )}
+
       {/* Global Chat Panel */}
-      {chatOpen && (
-        <div className="fixed bottom-6 right-6 w-[28rem] h-[36rem] z-50 shadow-2xl rounded-xl overflow-hidden">
-          <GlobalChatPanel
-            onClose={() => setChatOpen(false)}
-            bolCustomerId={bolCustomerId}
-          />
-        </div>
+      {chatOpen && !chatMinimized && (
+        <GlobalChatPanel
+          onClose={() => {
+            setChatOpen(false);
+            setChatMinimized(false);
+          }}
+          onMinimize={() => {
+            setChatOpen(false);
+            setChatMinimized(true);
+          }}
+          bolCustomerId={selectedChatCustomerId}
+          bolCustomers={allBolCustomers}
+          onBolCustomerChange={setSelectedChatCustomerId}
+        />
       )}
     </div>
   );
