@@ -251,7 +251,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
 
         if (campPerfRows.length > 0) {
-          await supabase.from('bol_campaign_performance').insert(campPerfRows);
+          const { error: campInsertError } = await supabase.from('bol_campaign_performance').insert(campPerfRows);
+          if (campInsertError) {
+            console.error('[bol-sync-trigger] Failed to insert campaign performance:', campInsertError);
+          } else {
+            console.log(`[bol-sync-trigger] Inserted ${campPerfRows.length} campaign performance rows`);
+          }
         }
 
         // ── Keywords + per-keyword performance → bol_keyword_performance ────
@@ -293,7 +298,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             };
           });
 
-          await supabase.from('bol_keyword_performance').insert(kwPerfRows);
+          const { error: kwInsertError } = await supabase.from('bol_keyword_performance').insert(kwPerfRows);
+          if (kwInsertError) {
+            console.error('[bol-sync-trigger] Failed to insert keyword performance:', kwInsertError);
+          } else {
+            console.log(`[bol-sync-trigger] Inserted ${kwPerfRows.length} keyword performance rows`);
+          }
         }
 
         // ── AI analysis blob (unchanged) ─────────────────────────────────────
