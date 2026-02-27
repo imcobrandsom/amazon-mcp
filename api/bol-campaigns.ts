@@ -30,15 +30,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .eq('bol_customer_id', customerId);
 
   if (from && to && typeof from === 'string' && typeof to === 'string') {
-    const fromDate = new Date(from).toISOString();
-    const toDate = new Date(to).toISOString();
-    campQuery = campQuery.gte('synced_at', fromDate).lte('synced_at', toDate);
-    kwQuery = kwQuery.gte('synced_at', fromDate).lte('synced_at', toDate);
+    // Filter by period dates (report date range), not synced_at
+    campQuery = campQuery.gte('period_start_date', from).lte('period_end_date', to);
+    kwQuery = kwQuery.gte('period_start_date', from).lte('period_end_date', to);
   }
 
   const [campResult, kwResult] = await Promise.all([
-    campQuery.order('synced_at', { ascending: false }).limit(5000),
-    kwQuery.order('synced_at', { ascending: false }).limit(10000),
+    campQuery.order('period_start_date', { ascending: false }).limit(5000),
+    kwQuery.order('period_start_date', { ascending: false }).limit(10000),
   ]);
 
   if (campResult.error) return res.status(500).json({ error: campResult.error.message });
