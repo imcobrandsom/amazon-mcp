@@ -989,7 +989,7 @@ function InventorySection({ analysis }: { analysis: BolAnalysis | null }) {
         </div>
       )}
 
-      <RecList recs={analysis.recommendations ?? []} />
+      <RecList recs={analysis?.recommendations ?? []} />
     </div>
   );
 }
@@ -1059,7 +1059,7 @@ function OrdersSection({ analysis }: { analysis: BolAnalysis | null }) {
         </div>
       </div>
 
-      <RecList recs={analysis.recommendations ?? []} />
+      <RecList recs={analysis?.recommendations ?? []} />
     </div>
   );
 }
@@ -1149,8 +1149,6 @@ function CampaignSection({
   }, [campData]);
 
   const roasColor = campMetrics.roas >= 5 ? 'green' : campMetrics.roas >= 3 ? 'amber' : 'red';
-
-  if (!analysis) return <SyncPending section="campaign" />;
 
   if (loading) {
     return (
@@ -1829,7 +1827,7 @@ function CampaignSection({
         )}
       </div>
 
-      <RecList recs={analysis.recommendations ?? []} />
+      <RecList recs={analysis?.recommendations ?? []} />
     </div>
   );
 }
@@ -2147,7 +2145,7 @@ function ReturnsSection({ analysis }: { analysis: BolAnalysis | null }) {
         </div>
       )}
 
-      <RecList recs={analysis.recommendations ?? []} />
+      <RecList recs={analysis?.recommendations ?? []} />
     </div>
   );
 }
