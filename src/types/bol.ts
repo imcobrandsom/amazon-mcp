@@ -128,6 +128,8 @@ export interface BolCampaignChartPoint {
   clicks: number;
   conversions: number;
   roas: number;
+  acos: number;        // Advertising Cost of Sale (ad spend / ad revenue)
+  tacos: number;       // Total Advertising Cost of Sale (ad spend / total revenue)
   ctr_pct: number;
 }
 

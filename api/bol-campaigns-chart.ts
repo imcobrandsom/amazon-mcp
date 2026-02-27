@@ -27,6 +27,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (error) return res.status(500).json({ error: error.message });
 
+  // Fetch orders data for TACOS calculation (total revenue from all sources)
+  const { data: ordersData } = await supabase
+    .from('bol_raw_snapshots')
+    .select('raw_data, fetched_at')
+    .eq('bol_customer_id', customerId)
+    .eq('data_type', 'orders')
+    .gte('fetched_at', since)
+    .order('fetched_at', { ascending: true });
+
+  // Build map of date → total revenue from orders
+  const orderRevenueByDate = new Map<string, number>();
+  for (const snap of ordersData ?? []) {
+    const date = (snap.fetched_at as string).slice(0, 10);
+    const orders = ((snap.raw_data as Record<string, unknown>)?.orders as Array<Record<string, unknown>>) ?? [];
+    const totalRevenue = orders.reduce((sum, order) => {
+      const orderItems = (order.orderItems as Array<{ quantity?: number; unitPrice?: number }>) ?? [];
+      const amount = orderItems.reduce(
+        (s, item) => s + ((item.quantity ?? 0) * (item.unitPrice ?? 0)),
+        0
+      );
+      return sum + amount;
+    }, 0);
+    orderRevenueByDate.set(date, (orderRevenueByDate.get(date) ?? 0) + totalRevenue);
+  }
+
   // Aggregate by date string (YYYY-MM-DD) — sum across all campaigns per day
   const byDate = new Map<string, {
     spend: number; revenue: number; impressions: number; clicks: number; conversions: number;
@@ -44,16 +69,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  const points = [...byDate.entries()].map(([date, v]) => ({
-    date,
-    spend:       v.spend,
-    revenue:     v.revenue,
-    impressions: v.impressions,
-    clicks:      v.clicks,
-    conversions: v.conversions,
-    roas:    v.spend > 0 ? Math.round((v.revenue / v.spend) * 100) / 100 : 0,
-    ctr_pct: v.impressions > 0 ? Math.round((v.clicks / v.impressions) * 10_000) / 100 : 0,
-  }));
+  const points = [...byDate.entries()].map(([date, v]) => {
+    const totalRevenue = orderRevenueByDate.get(date) ?? v.revenue; // Fallback to ad revenue if orders not available
+    return {
+      date,
+      spend:       v.spend,
+      revenue:     v.revenue,
+      impressions: v.impressions,
+      clicks:      v.clicks,
+      conversions: v.conversions,
+      roas:    v.spend > 0 ? Math.round((v.revenue / v.spend) * 100) / 100 : 0,
+      acos:    v.revenue > 0 ? Math.round((v.spend / v.revenue) * 10000) / 100 : 0,
+      tacos:   totalRevenue > 0 ? Math.round((v.spend / totalRevenue) * 10000) / 100 : 0,
+      ctr_pct: v.impressions > 0 ? Math.round((v.clicks / v.impressions) * 10_000) / 100 : 0,
+    };
+  });
 
   return res.status(200).json({ points });
 }

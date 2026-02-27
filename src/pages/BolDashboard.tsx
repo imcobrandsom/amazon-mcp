@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
 import {
   ArrowLeft,
   LayoutDashboard,
@@ -54,6 +56,8 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  ComposedChart,
+  Legend,
 } from 'recharts';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -1063,7 +1067,7 @@ function OrdersSection({ analysis }: { analysis: BolAnalysis | null }) {
 // ── Campaign Section ───────────────────────────────────────────────────────────
 
 type ChartDays   = 7 | 14 | 30 | 90;
-type ChartMetric = 'spend' | 'roas' | 'ctr_pct' | 'conversions';
+type ChartMetric = 'spend' | 'revenue' | 'roas' | 'acos' | 'tacos' | 'ctr_pct' | 'conversions';
 
 function CampaignSection({
   analysis,
@@ -1090,9 +1094,27 @@ function CampaignSection({
 
   // Chart state
   const [chartDays, setChartDays]         = useState<ChartDays>(30);
-  const [chartMetric, setChartMetric]     = useState<ChartMetric>('spend');
+  const [selectedMetrics, setSelectedMetrics] = useState<ChartMetric[]>(['spend', 'roas']);
   const [chartData, setChartData]         = useState<BolCampaignChartPoint[] | null>(null);
   const [chartLoading, setChartLoading]   = useState(false);
+  const [dateRangeStart, setDateRangeStart] = useState<Date | null>(new Date(Date.now() - 30 * 86400000));
+  const [dateRangeEnd, setDateRangeEnd]   = useState<Date | null>(new Date());
+
+  // Campaign filters
+  const [campStateFilter, setCampStateFilter] = useState<string[]>([]);
+  const [campTypeFilter, setCampTypeFilter] = useState<string[]>([]);
+  const [campAcosMin, setCampAcosMin] = useState<number | null>(null);
+  const [campAcosMax, setCampAcosMax] = useState<number | null>(null);
+  const [campRoasMin, setCampRoasMin] = useState<number | null>(null);
+  const [campMinSpend, setCampMinSpend] = useState<number | null>(null);
+  const [campHasClicks, setCampHasClicks] = useState<boolean | null>(null);
+
+  // Keyword filters
+  const [kwMatchTypeFilter, setKwMatchTypeFilter] = useState<string[]>([]);
+  const [kwStateFilter, setKwStateFilter] = useState<string[]>([]);
+  const [kwAcosMax, setKwAcosMax] = useState<number | null>(null);
+  const [kwMinSpend, setKwMinSpend] = useState<number | null>(null);
+  const [kwHasConversions, setKwHasConversions] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!bolCustomerId) return;
@@ -1142,18 +1164,55 @@ function CampaignSection({
   const acosColor = (v: number | null) =>
     v == null ? 'text-slate-400' : v <= 20 ? 'text-green-600' : v <= 40 ? 'text-amber-600' : 'text-red-600';
 
-  // Sorted + paginated campaigns
-  const sortedCamps   = [...(campData?.campaigns ?? [])].sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0));
+  // Filtered + sorted + paginated campaigns
+  const filteredCamps = (campData?.campaigns ?? []).filter(c => {
+    // State filter
+    if (campStateFilter.length > 0 && !campStateFilter.includes(c.state ?? '')) return false;
+    // Type filter
+    if (campTypeFilter.length > 0 && !campTypeFilter.includes(c.campaign_type ?? '')) return false;
+    // ACOS range filter
+    if (campAcosMin !== null && (c.acos === null || c.acos < campAcosMin)) return false;
+    if (campAcosMax !== null && (c.acos === null || c.acos > campAcosMax)) return false;
+    // ROAS threshold
+    if (campRoasMin !== null && (c.roas === null || c.roas < campRoasMin)) return false;
+    // Minimum spend
+    if (campMinSpend !== null && (c.spend === null || c.spend < campMinSpend)) return false;
+    // Has clicks filter
+    if (campHasClicks === true && (c.clicks === null || c.clicks === 0)) return false;
+    if (campHasClicks === false && (c.clicks ?? 0) > 0) return false;
+    return true;
+  });
+  const sortedCamps   = [...filteredCamps].sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0));
   const campTotalPages = Math.ceil(sortedCamps.length / campPageSize);
   const pagedCamps    = sortedCamps.slice(campPage * campPageSize, (campPage + 1) * campPageSize);
 
-  // Sorted + paginated keywords (no more hard 20-row cap)
-  const sortedKws   = [...(campData?.keywords ?? [])].sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0));
+  // Filtered + sorted + paginated keywords
+  const filteredKws = (campData?.keywords ?? []).filter(k => {
+    // Match type filter
+    if (kwMatchTypeFilter.length > 0 && !kwMatchTypeFilter.includes(k.match_type ?? '')) return false;
+    // State filter
+    if (kwStateFilter.length > 0 && !kwStateFilter.includes(k.state ?? '')) return false;
+    // ACOS max threshold
+    if (kwAcosMax !== null && (k.acos === null || k.acos > kwAcosMax)) return false;
+    // Min spend
+    if (kwMinSpend !== null && (k.spend === null || k.spend < kwMinSpend)) return false;
+    // Has conversions
+    if (kwHasConversions === true && (k.conversions === null || k.conversions === 0)) return false;
+    if (kwHasConversions === false && (k.conversions ?? 0) > 0) return false;
+    return true;
+  });
+  const sortedKws   = [...filteredKws].sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0));
   const kwTotalPages = Math.ceil(sortedKws.length / kwPageSize);
   const pagedKws    = sortedKws.slice(kwPage * kwPageSize, (kwPage + 1) * kwPageSize);
 
-  const chartMetricLabels: Record<ChartMetric, string> = {
-    spend: 'Spend', roas: 'ROAS', ctr_pct: 'CTR', conversions: 'Conversions',
+  const metricConfig: Record<ChartMetric, { label: string; axis: 'left' | 'right'; color: string; format: (v: number) => string }> = {
+    spend:       { label: 'Spend',       axis: 'left',  color: '#3b82f6', format: (v) => `€${v.toFixed(2)}` },
+    revenue:     { label: 'Revenue',     axis: 'left',  color: '#10b981', format: (v) => `€${v.toFixed(2)}` },
+    roas:        { label: 'ROAS',        axis: 'right', color: '#8b5cf6', format: (v) => `${v.toFixed(2)}×` },
+    acos:        { label: 'ACOS',        axis: 'right', color: '#f59e0b', format: (v) => `${v.toFixed(1)}%` },
+    tacos:       { label: 'TACOS',       axis: 'right', color: '#ef4444', format: (v) => `${v.toFixed(1)}%` },
+    ctr_pct:     { label: 'CTR',         axis: 'right', color: '#06b6d4', format: (v) => `${v.toFixed(2)}%` },
+    conversions: { label: 'Conversions', axis: 'right', color: '#ec4899', format: (v) => v.toFixed(0) },
   };
 
   return (
@@ -1192,37 +1251,71 @@ function CampaignSection({
             <p className="text-xs text-slate-400 mt-0.5">Daily totals across all campaigns</p>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
-            {/* Metric selector */}
+            {/* Metric selector - multi-select */}
+            <div className="flex items-center gap-1 flex-wrap">
+              {Object.entries(metricConfig).map(([key, config]) => {
+                const metric = key as ChartMetric;
+                const isSelected = selectedMetrics.includes(metric);
+                return (
+                  <button
+                    key={metric}
+                    onClick={() => setSelectedMetrics(prev =>
+                      prev.includes(metric) ? prev.filter(m => m !== metric) : [...prev, metric]
+                    )}
+                    className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium',
+                      isSelected
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                    )}
+                  >
+                    {config.label}
+                  </button>
+                );
+              })}
+            </div>
+            {/* Date range - quick presets */}
             <div className="flex items-center gap-1">
-              {(['spend', 'roas', 'ctr_pct', 'conversions'] as ChartMetric[]).map(m => (
+              <span className="text-xs text-slate-500 font-medium mr-1">Quick:</span>
+              {[7, 14, 30, 90].map(days => (
                 <button
-                  key={m}
-                  onClick={() => setChartMetric(m)}
-                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none',
-                    chartMetric === m
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'border-slate-200 text-slate-500 hover:border-slate-400'
-                  )}
+                  key={days}
+                  onClick={() => {
+                    setDateRangeEnd(new Date());
+                    setDateRangeStart(new Date(Date.now() - days * 86400000));
+                    setChartDays(days as ChartDays);
+                  }}
+                  className="px-2 py-1 rounded border text-[11px] border-slate-200 text-slate-500 hover:border-slate-400"
                 >
-                  {chartMetricLabels[m]}
+                  {days}d
                 </button>
               ))}
             </div>
-            {/* Date range */}
-            <div className="flex items-center gap-1">
-              {([7, 14, 30, 90] as ChartDays[]).map(d => (
-                <button
-                  key={d}
-                  onClick={() => setChartDays(d)}
-                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none',
-                    chartDays === d
-                      ? 'bg-slate-700 text-white border-slate-700'
-                      : 'border-slate-200 text-slate-500 hover:border-slate-400'
-                  )}
-                >
-                  {d}d
-                </button>
-              ))}
+            {/* Custom date picker */}
+            <div className="flex items-center gap-2">
+              <DatePicker
+                selected={dateRangeStart}
+                onChange={(date: Date | null) => setDateRangeStart(date)}
+                selectsStart
+                startDate={dateRangeStart ?? undefined}
+                endDate={dateRangeEnd ?? undefined}
+                maxDate={new Date()}
+                dateFormat="MMM dd, yyyy"
+                className="text-xs border border-slate-200 rounded px-2 py-1 w-32"
+                placeholderText="Start date"
+              />
+              <span className="text-xs text-slate-400">to</span>
+              <DatePicker
+                selected={dateRangeEnd}
+                onChange={(date: Date | null) => setDateRangeEnd(date)}
+                selectsEnd
+                startDate={dateRangeStart ?? undefined}
+                endDate={dateRangeEnd ?? undefined}
+                minDate={dateRangeStart ?? undefined}
+                maxDate={new Date()}
+                dateFormat="MMM dd, yyyy"
+                className="text-xs border border-slate-200 rounded px-2 py-1 w-32"
+                placeholderText="End date"
+              />
             </div>
           </div>
         </div>
@@ -1236,49 +1329,55 @@ function CampaignSection({
               <p className="text-xs text-slate-400">No chart data yet — run an advertising sync first.</p>
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                <defs>
-                  <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.2} />
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <ResponsiveContainer width="100%" height={280}>
+              <ComposedChart data={chartData} margin={{ top: 4, right: 48, bottom: 0, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis
                   dataKey="date"
-                  tick={{ fontSize: 10, fill: '#94a3b8' }}
-                  tickFormatter={d => (d as string).slice(5)}
+                  tick={{ fontSize: 11, fill: '#64748b' }}
+                  tickFormatter={(v) => new Date(v).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })}
                 />
-                <YAxis
-                  tick={{ fontSize: 10, fill: '#94a3b8' }}
-                  tickFormatter={v =>
-                    chartMetric === 'spend'   ? `€${v}` :
-                    chartMetric === 'roas'    ? `${v}×`  :
-                    chartMetric === 'ctr_pct' ? `${v}%`  : String(v)
-                  }
-                  width={52}
-                />
+                {/* Left Y-axis for currency (spend, revenue) */}
+                {selectedMetrics.some(m => metricConfig[m].axis === 'left') && (
+                  <YAxis
+                    yAxisId="left"
+                    tick={{ fontSize: 11, fill: '#64748b' }}
+                    tickFormatter={(v) => `€${v}`}
+                  />
+                )}
+                {/* Right Y-axis for percentages/counts */}
+                {selectedMetrics.some(m => metricConfig[m].axis === 'right') && (
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fontSize: 11, fill: '#64748b' }}
+                  />
+                )}
                 <Tooltip
-                  contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #e2e8f0' }}
-                  formatter={(v: unknown) => {
-                    const num = v as number;
-                    if (chartMetric === 'spend')   return [`€${num.toFixed(2)}`, 'Spend'];
-                    if (chartMetric === 'roas')    return [`${num.toFixed(2)}×`, 'ROAS'];
-                    if (chartMetric === 'ctr_pct') return [`${num.toFixed(2)}%`, 'CTR'];
-                    return [num, 'Conversions'];
+                  contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                  labelFormatter={(v) => new Date(v).toLocaleDateString('en-GB', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  formatter={(value: number | undefined, name: string | undefined) => {
+                    if (value === undefined || name === undefined) return ['—', name ?? ''];
+                    const metric = name as ChartMetric;
+                    return [metricConfig[metric].format(value), metricConfig[metric].label];
                   }}
                 />
-                <Area
-                  type="monotone"
-                  dataKey={chartMetric}
-                  stroke="#3b82f6"
-                  strokeWidth={2}
-                  fill="url(#chartGrad)"
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                />
-              </AreaChart>
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                {/* Render selected metrics */}
+                {selectedMetrics.map(metric => (
+                  <Area
+                    key={metric}
+                    yAxisId={metricConfig[metric].axis}
+                    type="monotone"
+                    dataKey={metric}
+                    name={metric}
+                    stroke={metricConfig[metric].color}
+                    fill={metricConfig[metric].color}
+                    fillOpacity={0.1}
+                    strokeWidth={2}
+                  />
+                ))}
+              </ComposedChart>
             </ResponsiveContainer>
           )}
         </div>
@@ -1310,6 +1409,133 @@ function CampaignSection({
               ))}
             </div>
           </div>
+
+          {/* Campaign Filters */}
+          <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 space-y-2">
+            <div className="flex items-center gap-4 flex-wrap">
+              {/* State filter */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 font-medium">State:</span>
+                {(['ENABLED', 'PAUSED', 'ARCHIVED'] as const).map(state => (
+                  <button
+                    key={state}
+                    onClick={() => setCampStateFilter(prev =>
+                      prev.includes(state) ? prev.filter(s => s !== state) : [...prev, state]
+                    )}
+                    className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium',
+                      campStateFilter.includes(state)
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                    )}
+                  >{state}</button>
+                ))}
+              </div>
+
+              {/* Type filter */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 font-medium">Type:</span>
+                {(['MANUAL', 'AUTOMATIC'] as const).map(type => (
+                  <button
+                    key={type}
+                    onClick={() => setCampTypeFilter(prev =>
+                      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+                    )}
+                    className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium',
+                      campTypeFilter.includes(type)
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                    )}
+                  >{type}</button>
+                ))}
+              </div>
+
+              {/* Has clicks filter */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 font-medium">Clicks:</span>
+                <button
+                  onClick={() => setCampHasClicks(prev => prev === true ? null : true)}
+                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium',
+                    campHasClicks === true
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                  )}
+                >With Clicks</button>
+                <button
+                  onClick={() => setCampHasClicks(prev => prev === false ? null : false)}
+                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium',
+                    campHasClicks === false
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                  )}
+                >No Clicks</button>
+              </div>
+            </div>
+
+            {/* Numeric filters */}
+            <div className="flex items-center gap-4 flex-wrap">
+              {/* ACOS range */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 font-medium">ACOS:</span>
+                <input
+                  type="number"
+                  placeholder="Min %"
+                  value={campAcosMin ?? ''}
+                  onChange={e => setCampAcosMin(e.target.value ? parseFloat(e.target.value) : null)}
+                  className="w-20 text-xs border border-slate-200 rounded px-2 py-1"
+                />
+                <span className="text-xs text-slate-400">to</span>
+                <input
+                  type="number"
+                  placeholder="Max %"
+                  value={campAcosMax ?? ''}
+                  onChange={e => setCampAcosMax(e.target.value ? parseFloat(e.target.value) : null)}
+                  className="w-20 text-xs border border-slate-200 rounded px-2 py-1"
+                />
+              </div>
+
+              {/* Min ROAS */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 font-medium">Min ROAS:</span>
+                <input
+                  type="number"
+                  placeholder="e.g. 3"
+                  step="0.1"
+                  value={campRoasMin ?? ''}
+                  onChange={e => setCampRoasMin(e.target.value ? parseFloat(e.target.value) : null)}
+                  className="w-20 text-xs border border-slate-200 rounded px-2 py-1"
+                />
+              </div>
+
+              {/* Min spend */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 font-medium">Min Spend:</span>
+                <input
+                  type="number"
+                  placeholder="€"
+                  value={campMinSpend ?? ''}
+                  onChange={e => setCampMinSpend(e.target.value ? parseFloat(e.target.value) : null)}
+                  className="w-20 text-xs border border-slate-200 rounded px-2 py-1"
+                />
+              </div>
+
+              {/* Clear filters */}
+              {(campStateFilter.length > 0 || campTypeFilter.length > 0 || campAcosMin !== null || campAcosMax !== null || campRoasMin !== null || campMinSpend !== null || campHasClicks !== null) && (
+                <button
+                  onClick={() => {
+                    setCampStateFilter([]);
+                    setCampTypeFilter([]);
+                    setCampAcosMin(null);
+                    setCampAcosMax(null);
+                    setCampRoasMin(null);
+                    setCampMinSpend(null);
+                    setCampHasClicks(null);
+                  }}
+                  className="px-2 py-1 rounded border border-red-200 text-[11px] text-red-600 hover:bg-red-50"
+                >Clear All</button>
+              )}
+            </div>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -1430,6 +1656,111 @@ function CampaignSection({
             ))}
           </div>
         </div>
+
+        {/* Keyword Filters */}
+        <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 space-y-2">
+          <div className="flex items-center gap-4 flex-wrap">
+            {/* Match type filter */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 font-medium">Match Type:</span>
+              {(['EXACT', 'PHRASE'] as const).map(matchType => (
+                <button
+                  key={matchType}
+                  onClick={() => setKwMatchTypeFilter(prev =>
+                    prev.includes(matchType) ? prev.filter(m => m !== matchType) : [...prev, matchType]
+                  )}
+                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium',
+                    kwMatchTypeFilter.includes(matchType)
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                  )}
+                >{matchType}</button>
+              ))}
+            </div>
+
+            {/* State filter */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 font-medium">State:</span>
+              {(['ENABLED', 'PAUSED'] as const).map(state => (
+                <button
+                  key={state}
+                  onClick={() => setKwStateFilter(prev =>
+                    prev.includes(state) ? prev.filter(s => s !== state) : [...prev, state]
+                  )}
+                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium',
+                    kwStateFilter.includes(state)
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                  )}
+                >{state}</button>
+              ))}
+            </div>
+
+            {/* Has conversions filter */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 font-medium">Conversions:</span>
+              <button
+                onClick={() => setKwHasConversions(prev => prev === true ? null : true)}
+                className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium',
+                  kwHasConversions === true
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                )}
+              >With Conv.</button>
+              <button
+                onClick={() => setKwHasConversions(prev => prev === false ? null : false)}
+                className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium',
+                  kwHasConversions === false
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                )}
+              >No Conv.</button>
+            </div>
+          </div>
+
+          {/* Numeric filters */}
+          <div className="flex items-center gap-4 flex-wrap">
+            {/* Max ACOS */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 font-medium">Max ACOS:</span>
+              <input
+                type="number"
+                placeholder="e.g. 25"
+                value={kwAcosMax ?? ''}
+                onChange={e => setKwAcosMax(e.target.value ? parseFloat(e.target.value) : null)}
+                className="w-20 text-xs border border-slate-200 rounded px-2 py-1"
+              />
+              <span className="text-xs text-slate-400">%</span>
+            </div>
+
+            {/* Min spend */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 font-medium">Min Spend:</span>
+              <input
+                type="number"
+                placeholder="€"
+                value={kwMinSpend ?? ''}
+                onChange={e => setKwMinSpend(e.target.value ? parseFloat(e.target.value) : null)}
+                className="w-20 text-xs border border-slate-200 rounded px-2 py-1"
+              />
+            </div>
+
+            {/* Clear filters */}
+            {(kwMatchTypeFilter.length > 0 || kwStateFilter.length > 0 || kwAcosMax !== null || kwMinSpend !== null || kwHasConversions !== null) && (
+              <button
+                onClick={() => {
+                  setKwMatchTypeFilter([]);
+                  setKwStateFilter([]);
+                  setKwAcosMax(null);
+                  setKwMinSpend(null);
+                  setKwHasConversions(null);
+                }}
+                className="px-2 py-1 rounded border border-red-200 text-[11px] text-red-600 hover:bg-red-50"
+              >Clear All</button>
+            )}
+          </div>
+        </div>
+
         {sortedKws.length === 0 ? (
           <p className="px-4 py-4 text-xs text-slate-400">
             No keyword data yet. Run a sync with advertising credentials to populate.

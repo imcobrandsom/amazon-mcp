@@ -174,10 +174,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const adsToken  = await getAdsToken(adsId, adsSecret);
         const campaigns = await getAdsCampaigns(adsToken);
 
-        // Date range: last 30 days
-        const now      = new Date();
-        const dateTo   = now.toISOString().slice(0, 10);
-        const dateFrom = new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10);
+        // Check if backfill needed
+        const { data: backfillStatus } = await supabase
+          .from('bol_advertising_backfill_status')
+          .select('*')
+          .eq('bol_customer_id', customer.id)
+          .single();
+
+        let dateFrom: string;
+        let dateTo: string;
+        const now = new Date();
+        dateTo = now.toISOString().slice(0, 10);
+
+        if (!backfillStatus) {
+          // First sync: fetch last 180 days (historical backfill)
+          dateFrom = new Date(now.getTime() - 180 * 86400000).toISOString().slice(0, 10);
+
+          // Insert backfill tracking record
+          await supabase.from('bol_advertising_backfill_status').insert({
+            bol_customer_id: customer.id,
+            backfill_completed: true,
+            oldest_date_fetched: dateFrom,
+            completed_at: now.toISOString(),
+          });
+        } else if (!backfillStatus.backfill_completed) {
+          // Backfill in progress: fetch remaining historical data
+          dateFrom = new Date(now.getTime() - 180 * 86400000).toISOString().slice(0, 10);
+        } else {
+          // Regular sync: fetch last 7 days (incremental)
+          dateFrom = new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10);
+        }
 
         // Ad groups per campaign (max 20)
         const allAdGroups: unknown[] = [];
