@@ -7,21 +7,15 @@
  * If omitted, returns array of all categories for the customer
  */
 
-import { createAdminClient } from './_lib/supabase-admin';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createAdminClient } from './_lib/supabase-admin.js';
 
-export default async function handler(req: Request) {
-  const url = new URL(req.url);
-  const customerId = url.searchParams.get('customerId');
-  const categorySlug = url.searchParams.get('categorySlug');
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const customerId = req.query.customerId as string;
+  const categorySlug = req.query.categorySlug as string | undefined;
 
   if (!customerId) {
-    return new Response(
-      JSON.stringify({ error: 'customerId query parameter is required' }),
-      {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
+    return res.status(400).json({ error: 'customerId query parameter is required' });
   }
 
   const supabase = createAdminClient();
@@ -39,53 +33,32 @@ export default async function handler(req: Request) {
       const { data, error } = await query;
 
       if (error) {
-        return new Response(JSON.stringify({ error: error.message }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' },
-        });
+        return res.status(500).json({ error: error.message });
       }
 
       // Return single object or null
-      return new Response(
-        JSON.stringify({ insights: data && data.length > 0 ? data[0] : null }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      );
+      return res.status(200).json({ insights: data && data.length > 0 ? data[0] : null });
     } else {
       // Get latest insights for all categories
       // Deduplicate by category_slug (keep only latest per category)
       const { data: allData, error } = await query;
 
       if (error) {
-        return new Response(JSON.stringify({ error: error.message }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' },
-        });
+        return res.status(500).json({ error: error.message });
       }
 
       // Deduplicate: keep only the latest insight per category_slug
       const seenSlugs = new Set<string>();
-      const deduped = (allData || []).filter(insight => {
+      const deduped = (allData || []).filter((insight) => {
         if (seenSlugs.has(insight.category_slug)) return false;
         seenSlugs.add(insight.category_slug);
         return true;
       });
 
-      return new Response(JSON.stringify({ insights: deduped }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return res.status(200).json({ insights: deduped });
     }
   } catch (err) {
     console.error('Error fetching category insights:', err);
-    return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
-      {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }
