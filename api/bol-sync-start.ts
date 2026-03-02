@@ -157,12 +157,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const adsToken  = await getAdsToken(adsClientId, adsClientSecret);
           const campaigns = await getAdsCampaigns(adsToken);
 
-          // Fetch last 7 days (incremental sync with overlap for missed sync days)
-          // This ensures data completeness even if some daily syncs fail
+          // Determine sync window: Sunday = full 30-day refresh, other days = incremental 1-day
+          // This balances API efficiency (1 day daily) with data completeness (30 days weekly)
           const now = new Date();
-          const daysToFetch = 7;
+          const dayOfWeek = now.getUTCDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+          const daysToFetch = (dayOfWeek === 0) ? 30 : 1;
 
-          console.log(`[bol-sync-start] Fetching ${daysToFetch} days of advertising data...`);
+          const syncType = dayOfWeek === 0 ? 'Weekly full refresh (Sunday)' : 'Daily incremental';
+          const dateFrom = new Date(now.getTime() - daysToFetch * 86400000).toISOString().slice(0, 10);
+          const dateTo = now.toISOString().slice(0, 10);
+
+          console.log(
+            `[bol-sync-start] ${syncType}: fetching ${daysToFetch} days of advertising data ` +
+            `(${dateFrom} to ${dateTo})`
+          );
 
           // Fetch ad groups per campaign (fetch once, reuse for all days)
           const allAdGroups: unknown[] = [];
