@@ -49,7 +49,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: customers, error: custError } = await supabase
       .from('bol_customers')
       .select('*')
-      .eq('is_active', true);
+      .eq('active', true);
 
     if (custError) throw custError;
     if (!customers || customers.length === 0) {
