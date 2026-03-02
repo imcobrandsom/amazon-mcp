@@ -3,18 +3,15 @@
  * GET /api/bol-sync-diagnostic?customerId=XXX
  */
 
-import { createAdminClient } from './_lib/supabase-admin';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createAdminClient } from './_lib/supabase-admin.js';
 
-export default async function handler(req: Request) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    const url = new URL(req.url);
-    const customerId = url.searchParams.get('customerId');
+    const customerId = req.query.customerId as string;
 
     if (!customerId) {
-      return new Response(JSON.stringify({ error: 'customerId required' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return res.status(400).json({ error: 'customerId required' });
     }
 
     console.log('[bol-sync-diagnostic] Starting for customer:', customerId);
@@ -22,7 +19,6 @@ export default async function handler(req: Request) {
     const supabase = createAdminClient();
     console.log('[bol-sync-diagnostic] Supabase client created');
 
-    // Wrap in try-catch for better error isolation
     // Check 1: Sync jobs status
     const { data: jobs, error: jobsErr } = await supabase
       .from('bol_sync_jobs')
@@ -76,67 +72,54 @@ export default async function handler(req: Request) {
 
     if (catErr) throw new Error(`Categories count failed: ${catErr.message}`);
 
-    return new Response(
-      JSON.stringify(
-        {
-          status: 'diagnostic_complete',
-          customer_id: customerId,
-          checks: {
-            sync_jobs: {
-              total: jobs?.length || 0,
-              latest: jobs?.[0] || null,
-              all: jobs || [],
-            },
-            raw_snapshots: {
-              total: snapshots?.length || 0,
-              by_type: snapshots?.reduce(
-                (acc, s) => {
-                  acc[s.data_type] = (acc[s.data_type] || 0) + 1;
-                  return acc;
-                },
-                {} as Record<string, number>
-              ),
-              latest_listings: listingsSnap
-                ? {
-                    id: listingsSnap.id,
-                    created_at: listingsSnap.created_at,
-                    record_count: listingsSnap.record_count,
-                    has_offers_array: hasOffersArray,
-                    offers_count: offersCount,
-                  }
-                : null,
-            },
-            competitor_snapshots: {
-              count: competitorCount || 0,
-            },
-            product_categories: {
-              count: categoriesCount || 0,
-            },
-          },
-          next_steps: !hasOffersArray
-            ? '❌ No listings snapshot with offers array found. Trigger Main Sync (Step 1) + wait for completion (Step 2).'
-            : competitorCount === 0
-            ? '⚠️ Listings data exists but no competitor data. Trigger Extended Sync (Step 3).'
-            : categoriesCount === 0
-            ? '⚠️ Competitor data exists but no product categories. Trigger Competitor Analysis.'
-            : '✅ All prerequisite data exists. Competitor research should work.',
+    return res.status(200).json({
+      status: 'diagnostic_complete',
+      customer_id: customerId,
+      checks: {
+        sync_jobs: {
+          total: jobs?.length || 0,
+          latest: jobs?.[0] || null,
+          all: jobs || [],
         },
-        null,
-        2
-      ),
-      {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
+        raw_snapshots: {
+          total: snapshots?.length || 0,
+          by_type: snapshots?.reduce(
+            (acc, s) => {
+              acc[s.data_type] = (acc[s.data_type] || 0) + 1;
+              return acc;
+            },
+            {} as Record<string, number>
+          ),
+          latest_listings: listingsSnap
+            ? {
+                id: listingsSnap.id,
+                created_at: listingsSnap.created_at,
+                record_count: listingsSnap.record_count,
+                has_offers_array: hasOffersArray,
+                offers_count: offersCount,
+              }
+            : null,
+        },
+        competitor_snapshots: {
+          count: competitorCount || 0,
+        },
+        product_categories: {
+          count: categoriesCount || 0,
+        },
+      },
+      next_steps: !hasOffersArray
+        ? '❌ No listings snapshot with offers array found. Trigger Main Sync (Step 1) + wait for completion (Step 2).'
+        : competitorCount === 0
+        ? '⚠️ Listings data exists but no competitor data. Trigger Extended Sync (Step 3).'
+        : categoriesCount === 0
+        ? '⚠️ Competitor data exists but no product categories. Trigger Competitor Analysis.'
+        : '✅ All prerequisite data exists. Competitor research should work.',
+    });
   } catch (err) {
     console.error('[bol-sync-diagnostic] Error:', err);
-    return new Response(
-      JSON.stringify({
-        error: (err as Error).message,
-        stack: (err as Error).stack,
-      }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
+    return res.status(500).json({
+      error: (err as Error).message,
+      stack: (err as Error).stack,
+    });
   }
 }
