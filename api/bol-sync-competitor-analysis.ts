@@ -11,19 +11,36 @@
  * Schedule: 30 minutes after bol-sync-extended (every 6 hours)
  */
 
-import { createAdminClient } from './_lib/supabase-admin';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createAdminClient } from './_lib/supabase-admin.js';
 import {
   getBolToken,
   getCatalogProduct,
   getProductsByCategory,
-} from './_lib/bol-api-client';
-import { extractCategory, parseProductListItem } from './_lib/bol-category-extractor';
+} from './_lib/bol-api-client.js';
+import { extractCategory, parseProductListItem } from './_lib/bol-category-extractor.js';
 import {
   analyzeCompetitorContent,
   generateCategoryInsights,
-} from './_lib/bol-competitor-analysis';
+} from './_lib/bol-competitor-analysis.js';
 
-export default async function handler(req: Request) {
+function isAuthorised(req: VercelRequest): boolean {
+  const cronSecret    = process.env.CRON_SECRET;
+  const webhookSecret = process.env.BOL_WEBHOOK_SECRET;
+  const auth          = req.headers['authorization'] ?? '';
+  const manual        = req.headers['x-webhook-secret'];
+  return (cronSecret && auth === `Bearer ${cronSecret}`)
+      || (webhookSecret && manual === webhookSecret)
+      || false;
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST' && req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+  if (!isAuthorised(req)) {
+    return res.status(401).json({ error: 'Unauthorised' });
+  }
   const supabase = createAdminClient();
   const results: Array<{ customerId: string; status: string; detail: any }> = [];
 
@@ -36,10 +53,7 @@ export default async function handler(req: Request) {
 
     if (custError) throw custError;
     if (!customers || customers.length === 0) {
-      return new Response(
-        JSON.stringify({ message: 'No active customers', results }),
-        { status: 200 }
-      );
+      return res.status(200).json({ message: 'No active customers', results });
     }
 
     for (const customer of customers) {
@@ -63,26 +77,17 @@ export default async function handler(req: Request) {
       }
     }
 
-    return new Response(
-      JSON.stringify({
-        message: 'Competitor analysis sync completed',
-        results,
-      }),
-      {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
+    return res.status(200).json({
+      message: 'Competitor analysis sync completed',
+      results,
+    });
   } catch (err) {
     console.error('Fatal error in competitor analysis sync:', err);
-    return new Response(
-      JSON.stringify({
-        error: (err as Error).message,
-        stack: (err as Error).stack,
-        results,
-      }),
-      { status: 500 }
-    );
+    return res.status(500).json({
+      error: (err as Error).message,
+      stack: (err as Error).stack,
+      results,
+    });
   }
 }
 
