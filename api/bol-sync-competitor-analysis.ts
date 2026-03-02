@@ -95,8 +95,7 @@ async function processCustomer(customer: any, supabase: any) {
   const token = await getBolToken(customer.bol_client_id, customer.bol_client_secret);
   const detail: Record<string, string> = {};
 
-  // ── Step 1: Extract categories from customer's products ──────────────
-  // Get latest catalog snapshots
+  // ── Step 1: Get EANs from listings snapshot ──────────────────────────
   const { data: rawSnapshots } = await supabase
     .from('bol_raw_snapshots')
     .select('raw_data')
@@ -106,35 +105,61 @@ async function processCustomer(customer: any, supabase: any) {
     .limit(1)
     .single();
 
-  if (!rawSnapshots?.raw_data?.catalog) {
-    detail.categories = 'No catalog data available yet';
+  if (!rawSnapshots?.raw_data?.offers || !Array.isArray(rawSnapshots.raw_data.offers)) {
+    detail.categories = 'No listings data available yet';
     return detail;
   }
 
-  const catalogData = rawSnapshots.raw_data.catalog as Record<string, any>;
-  const eans = Object.keys(catalogData);
+  const offers = rawSnapshots.raw_data.offers as Array<{ ean?: string; EAN?: string }>;
+  const eans = [...new Set(offers.map(o => o.ean || o.EAN).filter(Boolean))].slice(0, 50);
 
-  // Extract categories and store
-  const categoryInserts = [];
-  for (const ean of eans) {
-    const catalog = catalogData[ean];
-    if (!catalog) continue;
-
-    const { categoryId, categoryPath, categorySlug } = extractCategory(catalog);
-    const title = catalog.title || catalog.name || null;
-    const brand = catalog.brand || null;
-
-    categoryInserts.push({
-      bol_customer_id: customer.id,
-      ean,
-      category_id: categoryId,
-      category_path: categoryPath,
-      category_slug: categorySlug,
-      brand,
-      title,
-      fetched_at: new Date().toISOString(),
-    });
+  if (eans.length === 0) {
+    detail.categories = 'No EANs found in listings';
+    return detail;
   }
+
+  console.log(`[processCustomer] Found ${eans.length} unique EANs for customer ${customer.id}`);
+
+  // ── Step 2: Fetch catalog data for each EAN ──────────────────────────
+  const categoryInserts = [];
+  let catalogFetched = 0;
+
+  for (const ean of eans) {
+    try {
+      const catalog = await getCatalogProduct(token, ean);
+      if (!catalog) {
+        console.log(`[processCustomer] No catalog data for EAN ${ean}`);
+        continue;
+      }
+
+      const { categoryId, categoryPath, categorySlug } = extractCategory(catalog);
+      const title = catalog.title || catalog.name || null;
+      const brand = catalog.brand || null;
+
+      categoryInserts.push({
+        bol_customer_id: customer.id,
+        ean,
+        category_id: categoryId,
+        category_path: categoryPath,
+        category_slug: categorySlug,
+        brand,
+        title,
+        fetched_at: new Date().toISOString(),
+      });
+
+      catalogFetched++;
+
+      // Rate limit: 150ms between calls
+      if (catalogFetched < eans.length) {
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }
+    } catch (err) {
+      console.error(`[processCustomer] Failed to fetch catalog for EAN ${ean}:`, err);
+      // Continue with next EAN
+    }
+  }
+
+  console.log(`[processCustomer] Fetched catalog for ${catalogFetched}/${eans.length} EANs`);
 
   if (categoryInserts.length > 0) {
     // Upsert categories
