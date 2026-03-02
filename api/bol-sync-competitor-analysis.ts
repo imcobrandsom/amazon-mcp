@@ -55,7 +55,10 @@ export default async function handler(req: Request) {
         results.push({
           customerId: customer.id,
           status: 'error',
-          detail: { error: (err as Error).message },
+          detail: {
+            error: (err as Error).message,
+            stack: (err as Error).stack,
+          },
         });
       }
     }
@@ -75,6 +78,7 @@ export default async function handler(req: Request) {
     return new Response(
       JSON.stringify({
         error: (err as Error).message,
+        stack: (err as Error).stack,
         results,
       }),
       { status: 500 }
