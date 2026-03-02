@@ -39,10 +39,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .eq('bol_customer_id', customerId);
 
   if (until) {
-    // Get all rows where the report period overlaps with our query range
+    // Get all rows where period_start_date is within query range
+    // (Since all data is single-day, period_start_date is the canonical date)
     query = query
       .gte('period_start_date', since.slice(0, 10))
-      .lte('period_end_date', until.slice(0, 10));
+      .lte('period_start_date', until.slice(0, 10));
   } else {
     // Legacy: filter by period_start_date >= since
     query = query.gte('period_start_date', since.slice(0, 10));

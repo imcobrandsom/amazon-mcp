@@ -157,9 +157,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const adsToken  = await getAdsToken(adsClientId, adsClientSecret);
           const campaigns = await getAdsCampaigns(adsToken);
 
-          // Fetch last 2 days (incremental sync for async job)
+          // Fetch last 7 days (incremental sync with overlap for missed sync days)
+          // This ensures data completeness even if some daily syncs fail
           const now = new Date();
-          const daysToFetch = 2;
+          const daysToFetch = 7;
 
           console.log(`[bol-sync-start] Fetching ${daysToFetch} days of advertising data...`);
 

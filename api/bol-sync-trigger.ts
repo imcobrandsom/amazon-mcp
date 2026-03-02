@@ -196,8 +196,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             completed_at: now.toISOString(),
           });
         } else {
-          // Incremental sync: fetch last 2 days (yesterday + today)
-          daysToFetch = 2;
+          // Manual sync after backfill: fetch last 30 days to fill any gaps
+          // User expects comprehensive sync when manually triggered
+          daysToFetch = 30;
         }
 
         console.log(`[bol-sync-trigger] Fetching ${daysToFetch} days of advertising data...`);
