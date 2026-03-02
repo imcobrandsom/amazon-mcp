@@ -26,33 +26,38 @@ export function extractCategory(catalogData: any): CategoryInfo {
   let categoryId: string | null = null;
   let categoryPath = 'Uncategorized';
 
-  // Try to extract categoryId (various possible field names)
-  categoryId =
-    catalogData.categoryId ||
-    catalogData.category_id ||
-    catalogData.category?.id ||
-    catalogData.categories?.[0]?.id ||
-    null;
+  // Extract categoryId from gpc.chunkId (Bol.com's internal category ID)
+  if (catalogData.gpc?.chunkId) {
+    categoryId = String(catalogData.gpc.chunkId);
+  }
 
-  // Try to extract category path/name
-  // Possible structures:
-  // 1. categoryPath: "Sport > Sportkleding > Sportlegging"
-  // 2. category: { name: "Sportlegging", path: [...] }
-  // 3. categories: [{ name: "Sport" }, { name: "Sportkleding" }, { name: "Sportlegging" }]
-  // 4. category: "Sportlegging"
+  // Extract category from attributes array
+  // Look for "Product Group" attribute
+  if (catalogData.attributes && Array.isArray(catalogData.attributes)) {
+    const productGroupAttr = catalogData.attributes.find(
+      (attr: any) => attr.id === 'Product Group'
+    );
 
-  if (catalogData.categoryPath && typeof catalogData.categoryPath === 'string') {
-    categoryPath = catalogData.categoryPath;
-  } else if (catalogData.category_path && typeof catalogData.category_path === 'string') {
-    categoryPath = catalogData.category_path;
-  } else if (catalogData.category?.path && Array.isArray(catalogData.category.path)) {
-    categoryPath = catalogData.category.path.join(' > ');
-  } else if (catalogData.categories && Array.isArray(catalogData.categories)) {
-    categoryPath = catalogData.categories.map((c: any) => c.name || c).join(' > ');
-  } else if (catalogData.category?.name) {
-    categoryPath = catalogData.category.name;
-  } else if (typeof catalogData.category === 'string') {
-    categoryPath = catalogData.category;
+    if (productGroupAttr?.values?.[0]?.value) {
+      categoryPath = productGroupAttr.values[0].value;
+    }
+  }
+
+  // Fallback: Try other possible structures
+  if (categoryPath === 'Uncategorized') {
+    if (catalogData.categoryPath && typeof catalogData.categoryPath === 'string') {
+      categoryPath = catalogData.categoryPath;
+    } else if (catalogData.category_path && typeof catalogData.category_path === 'string') {
+      categoryPath = catalogData.category_path;
+    } else if (catalogData.category?.path && Array.isArray(catalogData.category.path)) {
+      categoryPath = catalogData.category.path.join(' > ');
+    } else if (catalogData.categories && Array.isArray(catalogData.categories)) {
+      categoryPath = catalogData.categories.map((c: any) => c.name || c).join(' > ');
+    } else if (catalogData.category?.name) {
+      categoryPath = catalogData.category.name;
+    } else if (typeof catalogData.category === 'string') {
+      categoryPath = catalogData.category;
+    }
   }
 
   // Generate slug from path (take the last segment, normalize)
