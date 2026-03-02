@@ -556,7 +556,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .select('raw_data')
       .eq('bol_customer_id', customerId)
       .eq('data_type', 'listings')
-      .order('created_at', { ascending: false })
+      .order('fetched_at', { ascending: false })
       .limit(1)
       .single();
 
