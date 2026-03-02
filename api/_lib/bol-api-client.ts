@@ -371,6 +371,50 @@ export async function getSalesForecast(
   return d.weeklyForecast ?? [];
 }
 
+/**
+ * Get list of products by category, search term, or filters
+ * https://api.bol.com/retailer/public/redoc/v10/retailer.html#tag/Product-Content/operation/get-product-list
+ */
+export async function getProductsByCategory(
+  token: string,
+  params: {
+    categoryId?: string;
+    searchTerm?: string;
+    countryCode?: 'NL' | 'BE';
+    page?: number;
+  }
+): Promise<{ products: unknown[]; totalCount: number }> {
+  const body: Record<string, unknown> = {
+    countryCode: params.countryCode || 'NL',
+    page: params.page || 1,
+  };
+
+  if (params.categoryId) body.categoryId = params.categoryId;
+  if (params.searchTerm) body.searchTerm = params.searchTerm;
+
+  const res = await fetch(`${BOL_API_BASE}/retailer/content/products`, {
+    method: 'POST',
+    headers: {
+      ...BOL_RETAILER_HEADERS,
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) return { products: [], totalCount: 0 };
+
+  const data = (await res.json()) as {
+    products?: unknown[];
+    totalCount?: number;
+  };
+
+  return {
+    products: data.products ?? [],
+    totalCount: data.totalCount ?? 0,
+  };
+}
+
 // ── Advertising API helpers ───────────────────────────────────────────────────
 
 async function adsFetch(

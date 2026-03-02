@@ -12,6 +12,8 @@ import type {
   BolCampaignPerformance,
   BolKeywordPerformance,
   BolCampaignChartPoint,
+  BolCategoryInsights,
+  BolCompetitorCatalog,
 } from '../types/bol';
 import { supabase } from './supabase';
 
@@ -189,6 +191,30 @@ export async function getBolKeywordsForClient(
   customerId: string
 ): Promise<{ rankings: BolKeywordRanking[]; count: number }> {
   return apiFetch(`/bol-keywords?customerId=${customerId}`);
+}
+
+// ── Competitor research data ──────────────────────────────────────────────────
+
+export async function getBolCategoryInsights(
+  customerId: string,
+  categorySlug?: string
+): Promise<{ insights: BolCategoryInsights | BolCategoryInsights[] | null }> {
+  const params = new URLSearchParams({ customerId });
+  if (categorySlug) params.append('categorySlug', categorySlug);
+  return apiFetch(`/bol-category-insights?${params}`);
+}
+
+export async function getBolCompetitorCatalog(
+  customerId: string,
+  categorySlug: string,
+  limit = 100
+): Promise<{ competitors: BolCompetitorCatalog[]; count: number }> {
+  const params = new URLSearchParams({
+    customerId,
+    categorySlug,
+    limit: limit.toString(),
+  });
+  return apiFetch(`/bol-competitor-catalog?${params}`);
 }
 
 // ── Dashboard-initiated sync ──────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import Layout from './components/Layout';
 import ClientOverview from './pages/ClientOverview';
 import ClientDetail from './pages/ClientDetail';
 import BolDashboard from './pages/BolDashboard';
+import BolCompetitorResearch from './pages/BolCompetitorResearch';
 import ConversationHistory from './pages/ConversationHistory';
 import Settings from './pages/Settings';
 
@@ -45,6 +46,7 @@ function ProtectedRoutes() {
         <Route path="/" element={<ClientOverview />} />
         <Route path="/clients/:clientId" element={<ClientDetail />} />
         <Route path="/clients/:clientId/bol" element={<BolDashboard />} />
+        <Route path="/clients/:clientId/bol-competitor-research" element={<BolCompetitorResearch />} />
         <Route
           path="/clients/:clientId/history"
           element={<ConversationHistory />}

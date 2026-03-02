@@ -25,6 +25,10 @@
     {
       "path": "/api/bol-sync-extended",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/bol-sync-competitor-analysis",
+      "schedule": "30 */6 * * *"
     }
   ]
 }

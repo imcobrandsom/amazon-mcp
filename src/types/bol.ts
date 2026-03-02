@@ -166,3 +166,80 @@ export interface BolKeywordRanking {
   current_impressions: number | null;
   trend: 'up' | 'down' | 'stable' | 'new';
 }
+
+// ── Competitor Research Types ────────────────────────────────────────
+
+export interface BolProductCategory {
+  id: string;
+  bol_customer_id: string;
+  ean: string;
+  category_id: string | null;
+  category_path: string | null;
+  category_slug: string;
+  brand: string | null;
+  title: string | null;
+  fetched_at: string;
+}
+
+export interface BolCompetitorCatalog {
+  id: string;
+  bol_customer_id: string;
+  category_slug: string;
+  category_id: string | null;
+  competitor_ean: string;
+  title: string | null;
+  description: string | null;
+  brand: string | null;
+  list_price: number | null;
+  is_customer_product: boolean;
+  relevance_score: number | null;
+  attributes: any;
+  fetched_at: string;
+  analysis?: BolCompetitorContentAnalysis | null;
+}
+
+export interface BolCompetitorContentAnalysis {
+  id: string;
+  bol_customer_id: string;
+  category_slug: string;
+  competitor_ean: string;
+  title_score: number | null;
+  title_length: number | null;
+  description_score: number | null;
+  description_length: number | null;
+  extracted_keywords: string[] | null;
+  extracted_usps: string[] | null;
+  content_quality: any;
+  analyzed_at: string;
+}
+
+export interface BolCategoryInsights {
+  id: string;
+  bol_customer_id: string;
+  category_slug: string;
+  category_id: string | null;
+  category_path: string;
+  your_product_count: number;
+  competitor_count: number;
+  total_products: number;
+  avg_competitor_price: number | null;
+  avg_your_price: number | null;
+  price_gap_percent: number | null;
+  top_competitors: Array<{
+    ean: string;
+    title: string | null;
+    price: number | null;
+  }> | null;
+  trending_keywords: Array<{
+    keyword: string;
+    frequency: number;
+    trend: string;
+  }> | null;
+  trending_usps: Array<{
+    usp: string;
+    frequency: number;
+    trend: string;
+  }> | null;
+  content_quality_avg: number | null;
+  generated_at: string;
+}

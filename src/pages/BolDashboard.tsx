@@ -1895,6 +1895,25 @@ function CompetitorSection({ bolCustomerId }: { bolCustomerId: string }) {
         <StatTile label="Avg competitors" value={avgComps} sub="per product" />
       </div>
 
+      {/* Link to Full Competitor Research */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-semibold text-blue-900">Category-Level Competitor Analysis</h4>
+            <p className="text-xs text-blue-700 mt-1">
+              Discover all products in your categories, analyze competitor content, and identify trending keywords & USPs
+            </p>
+          </div>
+          <Link
+            to={`/clients/${bolCustomerId}/bol-competitor-research`}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+          >
+            <Search size={14} />
+            View Full Analysis
+          </Link>
+        </div>
+      </div>
+
       {/* Competitor table */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
