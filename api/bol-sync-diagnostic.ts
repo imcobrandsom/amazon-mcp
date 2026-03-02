@@ -6,19 +6,23 @@
 import { createAdminClient } from './_lib/supabase-admin';
 
 export default async function handler(req: Request) {
-  const url = new URL(req.url);
-  const customerId = url.searchParams.get('customerId');
-
-  if (!customerId) {
-    return new Response(JSON.stringify({ error: 'customerId required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  const supabase = createAdminClient();
-
   try {
+    const url = new URL(req.url);
+    const customerId = url.searchParams.get('customerId');
+
+    if (!customerId) {
+      return new Response(JSON.stringify({ error: 'customerId required' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    console.log('[bol-sync-diagnostic] Starting for customer:', customerId);
+
+    const supabase = createAdminClient();
+    console.log('[bol-sync-diagnostic] Supabase client created');
+
+    // Wrap in try-catch for better error isolation
     // Check 1: Sync jobs status
     const { data: jobs, error: jobsErr } = await supabase
       .from('bol_sync_jobs')
@@ -126,6 +130,7 @@ export default async function handler(req: Request) {
       }
     );
   } catch (err) {
+    console.error('[bol-sync-diagnostic] Error:', err);
     return new Response(
       JSON.stringify({
         error: (err as Error).message,
