@@ -32,9 +32,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Check 2: Raw snapshots (do we have listings data?)
     const { data: snapshots, error: snapErr } = await supabase
       .from('bol_raw_snapshots')
-      .select('id, data_type, record_count, created_at')
+      .select('id, data_type, record_count, fetched_at')
       .eq('bol_customer_id', customerId)
-      .order('created_at', { ascending: false })
+      .order('fetched_at', { ascending: false })
       .limit(10);
 
     if (snapErr) throw new Error(`Snapshots query failed: ${snapErr.message}`);
@@ -42,10 +42,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Check 3: Do we have listings snapshot with offers?
     const { data: listingsSnap, error: listingsErr } = await supabase
       .from('bol_raw_snapshots')
-      .select('id, record_count, created_at, raw_data')
+      .select('id, record_count, fetched_at, raw_data')
       .eq('bol_customer_id', customerId)
       .eq('data_type', 'listings')
-      .order('created_at', { ascending: false })
+      .order('fetched_at', { ascending: false })
       .limit(1)
       .single();
 
@@ -93,7 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           latest_listings: listingsSnap
             ? {
                 id: listingsSnap.id,
-                created_at: listingsSnap.created_at,
+                fetched_at: listingsSnap.fetched_at,
                 record_count: listingsSnap.record_count,
                 has_offers_array: hasOffersArray,
                 offers_count: offersCount,
