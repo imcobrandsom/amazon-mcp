@@ -5,9 +5,9 @@
 
 const BOL_API_BASE  = 'https://api.bol.com';
 const BOL_TOKEN_URL = 'https://login.bol.com/token?grant_type=client_credentials';
-const BOL_HEADERS   = { 'Accept': 'application/vnd.retailer.v10+json', 'Content-Type': 'application/vnd.retailer.v10+json' };
+const BOL_HEADERS   = { 'Accept': 'application/vnd.retailer.v10+json', 'Content-Type': 'application/vnd.retailer.v10+json', 'Accept-Language': 'nl' };
 // Advertiser API uses the same base URL but different Accept header (v11)
-const BOL_ADS_HEADERS = { 'Accept': 'application/vnd.advertiser.v11+json', 'Content-Type': 'application/vnd.advertiser.v11+json' };
+const BOL_ADS_HEADERS = { 'Accept': 'application/vnd.advertiser.v11+json', 'Content-Type': 'application/vnd.advertiser.v11+json', 'Accept-Language': 'nl' };
 
 // ── Per-customer token cache (module-level, ~15 min lifetime per Vercel instance) ──────
 interface CachedToken { token: string; expiresAt: number }
