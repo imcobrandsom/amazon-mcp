@@ -43,14 +43,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log(`[test-catalog-api] Testing with EAN: ${testEan}`);
 
-    // Fetch catalog data
-    const catalog = await getCatalogProduct(token, testEan);
+    // Try to fetch catalog data with detailed error handling
+    let catalog: any = null;
+    let error: string | null = null;
+
+    try {
+      // Make the API call manually to see the response
+      const url = `https://api.bol.com/retailer/content/catalog-products/${encodeURIComponent(testEan)}`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.retailer.v10+json',
+        },
+      });
+
+      const responseText = await response.text();
+
+      return res.status(200).json({
+        ean: testEan,
+        api_url: url,
+        http_status: response.status,
+        http_ok: response.ok,
+        response_headers: Object.fromEntries(response.headers.entries()),
+        response_body: responseText ? JSON.parse(responseText) : null,
+        response_text: responseText.substring(0, 500),
+      });
+    } catch (err) {
+      error = (err as Error).message;
+    }
 
     return res.status(200).json({
       ean: testEan,
       catalog,
       catalog_type: typeof catalog,
       catalog_keys: catalog ? Object.keys(catalog) : [],
+      error,
     });
   } catch (err) {
     console.error('[test-catalog-api] Error:', err);
