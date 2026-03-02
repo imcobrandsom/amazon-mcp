@@ -92,7 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 async function processCustomer(customer: any, supabase: any) {
-  const token = await getBolToken(customer.client_id, customer.client_secret);
+  const token = await getBolToken(customer.bol_client_id, customer.bol_client_secret);
   const detail: Record<string, string> = {};
 
   // ── Step 1: Extract categories from customer's products ──────────────
@@ -102,7 +102,7 @@ async function processCustomer(customer: any, supabase: any) {
     .select('raw_data')
     .eq('bol_customer_id', customer.id)
     .eq('data_type', 'listings')
-    .order('created_at', { ascending: false })
+    .order('fetched_at', { ascending: false })
     .limit(1)
     .single();
 
