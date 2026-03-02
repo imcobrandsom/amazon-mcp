@@ -43,18 +43,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log(`[test-catalog-api] Testing with EAN: ${testEan}`);
 
-    // Try to fetch catalog data with detailed error handling
-    let catalog: any = null;
-    let error: string | null = null;
+    // Use getCatalogProduct which uses bolFetch with correct headers
+    const catalog = await getCatalogProduct(token, testEan);
 
-    try {
-      // Make the API call manually to see the response
+    if (!catalog) {
+      // Try manual call to debug
       const url = `https://api.bol.com/retailer/content/catalog-products/${encodeURIComponent(testEan)}`;
       const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Accept': 'application/vnd.retailer.v10+json',
+          'Content-Type': 'application/vnd.retailer.v10+json',
+          'Accept-Language': 'nl',
         },
       });
 
@@ -62,15 +63,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       return res.status(200).json({
         ean: testEan,
-        api_url: url,
-        http_status: response.status,
-        http_ok: response.ok,
-        response_headers: Object.fromEntries(response.headers.entries()),
-        response_body: responseText ? JSON.parse(responseText) : null,
-        response_text: responseText.substring(0, 500),
+        catalog_result: null,
+        debug_manual_call: {
+          url,
+          status: response.status,
+          ok: response.ok,
+          headers: Object.fromEntries(response.headers.entries()),
+          body: responseText ? JSON.parse(responseText) : null,
+        },
       });
-    } catch (err) {
-      error = (err as Error).message;
     }
 
     return res.status(200).json({
@@ -78,7 +79,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       catalog,
       catalog_type: typeof catalog,
       catalog_keys: catalog ? Object.keys(catalog) : [],
-      error,
     });
   } catch (err) {
     console.error('[test-catalog-api] Error:', err);
