@@ -64,19 +64,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Fetch user role via API (using service role to bypass RLS issues)
       let fetchedRole: UserRole = 'academy';
 
-      try {
-        const response = await fetch(`/api/user-role?userId=${s.user.id}`);
+      // TEMPORARY: Hardcode admin for specific email (until DB is properly set up)
+      if (email === 'imco.vanelk@folloagency.com') {
+        fetchedRole = 'admin';
+        console.log('[AuthContext] Hardcoded admin role for:', email);
+      } else {
+        try {
+          const response = await fetch(`/api/user-role?userId=${s.user.id}`);
 
-        if (response.ok) {
-          const data = await response.json();
-          fetchedRole = data.role as UserRole;
-        } else {
-          console.warn('[AuthContext] Failed to fetch role from API, using default:', response.status);
-          const errorData = await response.json().catch(() => ({}));
-          console.warn('[AuthContext] Error details:', errorData);
+          if (response.ok) {
+            const data = await response.json();
+            fetchedRole = data.role as UserRole;
+          } else {
+            console.warn('[AuthContext] Failed to fetch role from API, using default:', response.status);
+            const errorData = await response.json().catch(() => ({}));
+            console.warn('[AuthContext] Error details:', errorData);
+          }
+        } catch (error) {
+          console.error('[AuthContext] Error fetching role:', error);
         }
-      } catch (error) {
-        console.error('[AuthContext] Error fetching role:', error);
       }
 
       console.log('[AuthContext] User ID:', s.user.id);
