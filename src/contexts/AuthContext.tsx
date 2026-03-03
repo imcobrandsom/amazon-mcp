@@ -65,17 +65,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       let fetchedRole: UserRole = 'academy';
 
       try {
-        const response = await fetch('/api/user-role', {
-          headers: {
-            'Authorization': `Bearer ${s.access_token}`,
-          },
-        });
+        const response = await fetch(`/api/user-role?userId=${s.user.id}`);
 
         if (response.ok) {
           const data = await response.json();
           fetchedRole = data.role as UserRole;
         } else {
           console.warn('[AuthContext] Failed to fetch role from API, using default:', response.status);
+          const errorData = await response.json().catch(() => ({}));
+          console.warn('[AuthContext] Error details:', errorData);
         }
       } catch (error) {
         console.error('[AuthContext] Error fetching role:', error);

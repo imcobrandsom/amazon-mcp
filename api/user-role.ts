@@ -2,8 +2,8 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createAdminClient } from './_lib/supabase-admin';
 
 /**
- * GET /api/user-role
- * Returns the role for the authenticated user
+ * GET /api/user-role?userId=xxx
+ * Returns the role for the specified user (admin client bypasses RLS)
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
@@ -11,32 +11,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // Get the session token from the Authorization header
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
+    const userId = req.query.userId as string;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'Missing userId parameter' });
     }
 
-    const token = authHeader.substring(7);
     const supabase = createAdminClient();
 
-    // Verify the token and get user
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-
-    if (authError || !user) {
-      console.error('[user-role] Auth error:', authError);
-      return res.status(401).json({ error: 'Unauthorized', details: authError?.message });
-    }
-
-    console.log('[user-role] Authenticated user:', user.id);
-
-    // Fetch user role
+    // Fetch user role using service role (bypasses RLS)
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
       .select('role')
-      .eq('id', user.id)
+      .eq('id', userId)
       .maybeSingle();
 
+    console.log('[user-role] User ID:', userId);
     console.log('[user-role] Profile data:', profile);
     console.log('[user-role] Profile error:', profileError);
 
