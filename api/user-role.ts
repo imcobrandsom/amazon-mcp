@@ -24,8 +24,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
 
     if (authError || !user) {
-      return res.status(401).json({ error: 'Unauthorized' });
+      console.error('[user-role] Auth error:', authError);
+      return res.status(401).json({ error: 'Unauthorized', details: authError?.message });
     }
+
+    console.log('[user-role] Authenticated user:', user.id);
 
     // Fetch user role
     const { data: profile, error: profileError } = await supabase
@@ -34,12 +37,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .eq('id', user.id)
       .maybeSingle();
 
+    console.log('[user-role] Profile data:', profile);
+    console.log('[user-role] Profile error:', profileError);
+
     if (profileError) {
       console.error('[user-role] Error fetching profile:', profileError);
-      return res.status(500).json({ error: 'Failed to fetch role' });
+      return res.status(500).json({
+        error: 'Failed to fetch role',
+        details: profileError.message,
+        code: profileError.code
+      });
     }
 
     const role = (profile?.role as 'admin' | 'academy') ?? 'academy';
+    console.log('[user-role] Returning role:', role);
 
     return res.status(200).json({ role });
   } catch (err) {
