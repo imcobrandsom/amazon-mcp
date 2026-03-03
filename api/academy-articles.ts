@@ -39,9 +39,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (user) {
         const { data: roleData } = await supabase
-          .from('user_roles')
+          .from('user_profiles')
           .select('role')
-          .eq('user_id', user.id)
+          .eq('id', user.id)
           .single();
 
         isAdmin = roleData?.role === 'admin';
@@ -79,9 +79,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Check admin role
   const { data: roleData } = await supabase
-    .from('user_roles')
+    .from('user_profiles')
     .select('role')
-    .eq('user_id', user.id)
+    .eq('id', user.id)
     .single();
 
   if (roleData?.role !== 'admin') {

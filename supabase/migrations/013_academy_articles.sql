@@ -38,42 +38,25 @@ CREATE POLICY "Anyone can read published articles"
   FOR SELECT
   USING (is_published = true);
 
--- Admins can do everything
+-- Admins can do everything (uses get_my_role() helper from migration 012)
 CREATE POLICY "Admins can insert articles"
   ON academy_articles
   FOR INSERT
   TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM user_roles
-      WHERE user_roles.user_id = auth.uid()
-      AND user_roles.role = 'admin'
-    )
-  );
+  WITH CHECK (public.get_my_role() = 'admin');
 
 CREATE POLICY "Admins can update articles"
   ON academy_articles
   FOR UPDATE
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM user_roles
-      WHERE user_roles.user_id = auth.uid()
-      AND user_roles.role = 'admin'
-    )
-  );
+  USING (public.get_my_role() = 'admin')
+  WITH CHECK (public.get_my_role() = 'admin');
 
 CREATE POLICY "Admins can delete articles"
   ON academy_articles
   FOR DELETE
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM user_roles
-      WHERE user_roles.user_id = auth.uid()
-      AND user_roles.role = 'admin'
-    )
-  );
+  USING (public.get_my_role() = 'admin');
 
 -- Updated_at trigger
 CREATE OR REPLACE FUNCTION update_academy_articles_updated_at()
