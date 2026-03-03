@@ -688,11 +688,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Import and execute the competitor analysis sync directly
       const { default: competitorAnalysisHandler } = await import('./bol-sync-competitor-analysis.js');
 
-      // Create a mock request with authorization header for internal call
+      // Create a mock request with internal call flag
       const mockReq = {
         method: 'POST',
         headers: {
-          authorization: req.headers.authorization, // Pass through auth
+          'x-internal-call': 'true', // Mark as internal call to bypass auth
         },
         query: {},
         body: { customerId }, // Pass customerId in body

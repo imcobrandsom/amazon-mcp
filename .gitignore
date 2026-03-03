@@ -31,3 +31,7 @@ quick-migration.sh
 check-nov-2025-data.js
 .env.vercel
 .env*.local
+
+# Test documentation (local only)
+TESTING_GUIDE.md
+VERIFICATION_QUERIES.sql

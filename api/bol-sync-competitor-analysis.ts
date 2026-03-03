@@ -36,8 +36,11 @@ function isAuthorised(req: VercelRequest): boolean {
   const webhookSecret = process.env.BOL_WEBHOOK_SECRET;
   const auth          = req.headers['authorization'] ?? '';
   const manual        = req.headers['x-webhook-secret'];
+  const internal      = req.headers['x-internal-call'];
+
   return (cronSecret && auth === `Bearer ${cronSecret}`)
       || (webhookSecret && manual === webhookSecret)
+      || (internal === 'true') // Allow internal calls from bol-sync-trigger
       || false;
 }
 
@@ -51,12 +54,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const supabase = createAdminClient();
   const results: Array<{ customerId: string; status: string; detail: any }> = [];
 
+  // Check if a specific customer ID is provided (for manual triggers)
+  const requestedCustomerId = req.body?.customerId;
+
   try {
-    // Get all active Bol.com customers
-    const { data: customers, error: custError } = await supabase
+    // Get all active Bol.com customers (or specific one if requested)
+    let query = supabase
       .from('bol_customers')
       .select('*')
       .eq('active', true);
+
+    if (requestedCustomerId) {
+      query = query.eq('id', requestedCustomerId);
+    }
+
+    const { data: customers, error: custError } = await query;
 
     if (custError) throw custError;
     if (!customers || customers.length === 0) {
