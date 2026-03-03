@@ -511,13 +511,32 @@ async function processCategory(
     our_price: p.our_price,
   }));
 
+  // Get ALL catalog data for this category (not just newly inserted)
+  const { data: allCatalogData } = await supabase
+    .from('bol_competitor_catalog')
+    .select('competitor_ean, title, brand, list_price')
+    .eq('bol_customer_id', customerId)
+    .eq('category_slug', category.categorySlug);
+
+  const allCatalogInserts = (allCatalogData || []).map((c: any) => ({
+    bol_customer_id: customerId,
+    competitor_ean: c.competitor_ean,
+    category_slug: category.categorySlug,
+    category_id: category.categoryId,
+    title: c.title,
+    brand: c.brand,
+    list_price: c.list_price,
+  }));
+
+  console.log(`[processCategory] Generating insights for ${allCatalogInserts.length} total competitors in category`);
+
   await generateCategoryInsights(
     customerId,
     category.categorySlug,
     category.categoryId,
     category.categoryPath,
     yourProductsWithPrices,
-    catalogInserts,
+    allCatalogInserts,
     analysisInserts,
     supabase
   );
