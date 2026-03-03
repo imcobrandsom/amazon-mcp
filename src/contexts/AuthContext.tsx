@@ -62,13 +62,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(s);
 
       // Fetch user role from user_profiles table
-      const { data: profileData } = await supabase
+      const { data: profileData, error: profileError } = await supabase
         .from('user_profiles')
         .select('role')
         .eq('id', s.user.id)
         .single();
 
+      // Debug logging
+      console.log('[AuthContext] User ID:', s.user.id);
+      console.log('[AuthContext] Profile data:', profileData);
+      console.log('[AuthContext] Profile error:', profileError);
+
       const fetchedRole: UserRole = (profileData?.role as UserRole) ?? 'academy';
+      console.log('[AuthContext] Fetched role:', fetchedRole);
+
       setRole(fetchedRole);
       setUser(buildUser(s, fetchedRole));
     },
