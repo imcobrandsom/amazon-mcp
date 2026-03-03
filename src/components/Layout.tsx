@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutGrid, LogOut, ChevronRight, Settings, ChevronDown, ShoppingCart } from 'lucide-react';
+import { LayoutGrid, LogOut, ChevronRight, Settings, ChevronDown, ShoppingCart, BookOpen } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import clsx from 'clsx';
 
@@ -15,7 +15,7 @@ interface BolNavCustomer {
 }
 
 export default function Layout({ children }: LayoutProps) {
-  const { user, signOut } = useAuth();
+  const { user, signOut, role } = useAuth();
   const location = useLocation();
 
   const [bolCustomers, setBolCustomers] = useState<BolNavCustomer[]>([]);
@@ -23,8 +23,9 @@ export default function Layout({ children }: LayoutProps) {
     location.pathname.includes('/bol')
   );
 
-  // Fetch bol customers once on mount
+  // Fetch bol customers once on mount (only for admin)
   useEffect(() => {
+    if (role !== 'admin') return;
     fetch('/api/bol-customers')
       .then(r => r.ok ? r.json() : { customers: [] })
       .then((data: { customers?: BolNavCustomer[] }) => {
@@ -33,7 +34,7 @@ export default function Layout({ children }: LayoutProps) {
         );
       })
       .catch(() => {});
-  }, []);
+  }, [role]);
 
   // Auto-expand when navigating to a bol page
   useEffect(() => {
@@ -65,73 +66,92 @@ export default function Layout({ children }: LayoutProps) {
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+          {/* Academy (always visible) */}
           <Link
-            to="/"
+            to="/academy"
             className={clsx(
               'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors',
-              location.pathname === '/'
+              location.pathname === '/academy'
                 ? 'bg-brand-600 text-white'
                 : 'text-navy-200 hover:bg-navy-800 hover:text-white'
             )}
           >
-            <LayoutGrid size={15} />
-            Clients
+            <BookOpen size={15} />
+            Academy
           </Link>
 
-          {/* Bol.com section */}
-          {bolCustomers.length > 0 && (
-            <div>
-              <button
-                onClick={() => setBolOpen(o => !o)}
+          {/* Admin-only sections */}
+          {role === 'admin' && (
+            <>
+              <Link
+                to="/"
                 className={clsx(
-                  'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors w-full',
-                  isBolActive
-                    ? 'text-orange-300'
+                  'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors',
+                  location.pathname === '/'
+                    ? 'bg-brand-600 text-white'
                     : 'text-navy-200 hover:bg-navy-800 hover:text-white'
                 )}
               >
-                <div className="w-3.5 h-3.5 bg-orange-500 rounded-sm flex-shrink-0" />
-                <span className="flex-1 text-left">Bol.com</span>
-                <ChevronDown
-                  size={12}
-                  className={clsx('transition-transform duration-150', bolOpen && 'rotate-180')}
-                />
-              </button>
+                <LayoutGrid size={15} />
+                Clients
+              </Link>
 
-              {bolOpen && (
-                <div className="mt-0.5 ml-2 space-y-0.5">
-                  {bolCustomers.map(c => (
-                    <Link
-                      key={c.id}
-                      to={`/clients/${c.client_id}/bol`}
-                      className={clsx(
-                        'flex items-center gap-2 pl-5 pr-3 py-1.5 rounded-md text-xs transition-colors',
-                        location.pathname === `/clients/${c.client_id}/bol`
-                          ? 'bg-orange-500/20 text-orange-300 font-medium'
-                          : 'text-navy-300 hover:bg-navy-800 hover:text-white'
-                      )}
-                    >
-                      <ShoppingCart size={11} className="flex-shrink-0 opacity-60" />
-                      {c.seller_name}
-                    </Link>
-                  ))}
+              {/* Bol.com section */}
+              {bolCustomers.length > 0 && (
+                <div>
+                  <button
+                    onClick={() => setBolOpen(o => !o)}
+                    className={clsx(
+                      'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors w-full',
+                      isBolActive
+                        ? 'text-orange-300'
+                        : 'text-navy-200 hover:bg-navy-800 hover:text-white'
+                    )}
+                  >
+                    <div className="w-3.5 h-3.5 bg-orange-500 rounded-sm flex-shrink-0" />
+                    <span className="flex-1 text-left">Bol.com</span>
+                    <ChevronDown
+                      size={12}
+                      className={clsx('transition-transform duration-150', bolOpen && 'rotate-180')}
+                    />
+                  </button>
+
+                  {bolOpen && (
+                    <div className="mt-0.5 ml-2 space-y-0.5">
+                      {bolCustomers.map(c => (
+                        <Link
+                          key={c.id}
+                          to={`/clients/${c.client_id}/bol`}
+                          className={clsx(
+                            'flex items-center gap-2 pl-5 pr-3 py-1.5 rounded-md text-xs transition-colors',
+                            location.pathname === `/clients/${c.client_id}/bol`
+                              ? 'bg-orange-500/20 text-orange-300 font-medium'
+                              : 'text-navy-300 hover:bg-navy-800 hover:text-white'
+                          )}
+                        >
+                          <ShoppingCart size={11} className="flex-shrink-0 opacity-60" />
+                          {c.seller_name}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          )}
 
-          <Link
-            to="/settings"
-            className={clsx(
-              'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors',
-              location.pathname === '/settings'
-                ? 'bg-brand-600 text-white'
-                : 'text-navy-200 hover:bg-navy-800 hover:text-white'
-            )}
-          >
-            <Settings size={15} />
-            Settings
-          </Link>
+              <Link
+                to="/settings"
+                className={clsx(
+                  'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors',
+                  location.pathname === '/settings'
+                    ? 'bg-brand-600 text-white'
+                    : 'text-navy-200 hover:bg-navy-800 hover:text-white'
+                )}
+              >
+                <Settings size={15} />
+                Settings
+              </Link>
+            </>
+          )}
         </nav>
 
         {/* User */}

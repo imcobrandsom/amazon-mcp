@@ -9,11 +9,12 @@ import BolDashboard from './pages/BolDashboard';
 import BolCompetitorResearch from './pages/BolCompetitorResearch';
 import ConversationHistory from './pages/ConversationHistory';
 import Settings from './pages/Settings';
+import AcademyPage from './pages/AcademyPage';
 
 function ProtectedRoutes() {
-  const { session, loading } = useAuth();
+  const { session, loading, role, roleLoading } = useAuth();
 
-  if (loading) {
+  if (loading || roleLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="flex items-center gap-3 text-slate-500">
@@ -40,6 +41,19 @@ function ProtectedRoutes() {
 
   if (!session) return <Navigate to="/login" replace />;
 
+  // Academy users: only see Academy route
+  if (role === 'academy') {
+    return (
+      <Layout>
+        <Routes>
+          <Route path="/academy" element={<AcademyPage />} />
+          <Route path="*" element={<Navigate to="/academy" replace />} />
+        </Routes>
+      </Layout>
+    );
+  }
+
+  // Admin users: full platform access
   return (
     <Layout>
       <Routes>
@@ -52,6 +66,7 @@ function ProtectedRoutes() {
           element={<ConversationHistory />}
         />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/academy" element={<AcademyPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>

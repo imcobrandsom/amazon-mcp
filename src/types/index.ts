@@ -1,3 +1,5 @@
+export type UserRole = 'admin' | 'academy';
+
 export interface Client {
   id: string;
   name: string;
@@ -106,6 +108,7 @@ export interface User {
   email: string;
   full_name?: string;
   avatar_url?: string;
+  role: UserRole;
 }
 
 // Chat mode type for routing
