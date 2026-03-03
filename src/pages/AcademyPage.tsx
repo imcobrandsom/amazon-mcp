@@ -547,11 +547,23 @@ export default function AcademyPage() {
 
   // ── Admin actions ──────────────────────────────────────────────────────────
   const handleEdit = (article: AcademyArticle) => {
+    // Check if we're in JSON mode (fake ID)
+    if (article.id.startsWith('json-')) {
+      alert('Database is nog niet actief. Run eerst de migratie en seed script. Zie ACADEMY_ADMIN.md voor instructies.');
+      return;
+    }
+
     setEditingArticle(article);
     setShowEditModal(true);
   };
 
   const handleCreate = () => {
+    // Check if we have any real articles (not JSON fallback)
+    if (articles.length > 0 && articles[0].id.startsWith('json-')) {
+      alert('Database is nog niet actief. Run eerst de migratie en seed script. Zie ACADEMY_ADMIN.md voor instructies.');
+      return;
+    }
+
     setEditingArticle(null);
     setShowEditModal(true);
   };
@@ -573,6 +585,12 @@ export default function AcademyPage() {
   };
 
   const handleDelete = async (article: AcademyArticle) => {
+    // Check if we're in JSON mode (fake ID)
+    if (article.id.startsWith('json-')) {
+      alert('Database is nog niet actief. Run eerst de migratie en seed script. Zie ACADEMY_ADMIN.md voor instructies.');
+      return;
+    }
+
     if (!confirm(`Weet je zeker dat je "${article.title}" wilt verwijderen?`)) return;
 
     try {
@@ -692,7 +710,28 @@ export default function AcademyPage() {
       </aside>
 
       {/* Main content */}
-      <div className="flex-1 overflow-hidden flex">
+      <div className="flex-1 overflow-hidden flex flex-col">
+        {/* Admin setup warning banner */}
+        {isAdmin && articles.length > 0 && articles[0].id.startsWith('json-') && (
+          <div className="bg-orange-50 border-b border-orange-200 px-4 py-3 flex-shrink-0">
+            <div className="flex items-start gap-2">
+              <svg className="w-5 h-5 text-orange-600 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-orange-900">Database setup vereist voor admin functies</p>
+                <p className="text-xs text-orange-700 mt-1">
+                  Bewerken/verwijderen zijn uitgeschakeld. Run de migratie en seed script.
+                  <a href="https://github.com/imcobrandsom/amazon-mcp/blob/main/ACADEMY_ADMIN.md" target="_blank" rel="noopener noreferrer" className="underline ml-1">
+                    Zie documentatie →
+                  </a>
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="flex-1 overflow-hidden flex">
         {/* Article list */}
         {(!activeArticle || search) && (
           <div
@@ -760,6 +799,7 @@ export default function AcademyPage() {
             </div>
           </div>
         )}
+        </div>
       </div>
     </div>
   );
