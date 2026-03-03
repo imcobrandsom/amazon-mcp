@@ -113,3 +113,5 @@ export interface User {
 
 // Chat mode type for routing
 export type ChatMode = 'bol' | 'amazon';
+
+export type { AcademyArticle, AcademyCategoryGroup, AcademySubcategoryGroup } from './academy';

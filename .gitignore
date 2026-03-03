@@ -30,3 +30,4 @@ quick-migration.sh
 *.log
 check-nov-2025-data.js
 .env.vercel
+.env*.local

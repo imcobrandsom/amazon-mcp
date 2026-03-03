@@ -46,7 +46,7 @@ function ProtectedRoutes() {
     return (
       <Layout>
         <Routes>
-          <Route path="/academy" element={<AcademyPage />} />
+          <Route path="/academy/*" element={<AcademyPage />} />
           <Route path="*" element={<Navigate to="/academy" replace />} />
         </Routes>
       </Layout>
@@ -66,7 +66,7 @@ function ProtectedRoutes() {
           element={<ConversationHistory />}
         />
         <Route path="/settings" element={<Settings />} />
-        <Route path="/academy" element={<AcademyPage />} />
+        <Route path="/academy/*" element={<AcademyPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
