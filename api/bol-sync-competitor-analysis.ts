@@ -15,14 +15,16 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createAdminClient } from './_lib/supabase-admin.js';
-import * as client from './_lib/bol-api-client.js';
-const {
+import {
   getBolToken,
   getProductList,
   getCatalogProduct,
   getSearchTermVolume,
+  getProductPlacement,
+  extractDeepestCategoryId,
+  extractCategoryPath,
   sleep,
-} = client;
+} from './_lib/bol-api-client.js';
 import {
   analyzeCompetitorContent,
   generateCategoryInsights,
@@ -146,19 +148,19 @@ async function processCustomer(customer: any, supabase: any) {
   for (const ean of eans) {
     try {
       // Use placement API to get catalog category (compatible with /products/list)
-      const placement = await client.getProductPlacement(token, ean);
+      const placement = await getProductPlacement(token, ean);
       if (!placement) {
         console.log(`[processCustomer] Geen placement gevonden voor EAN ${ean}`);
         continue;
       }
 
-      const categoryId = client.extractDeepestCategoryId(placement);
+      const categoryId = extractDeepestCategoryId(placement);
       if (!categoryId) {
         console.log(`[processCustomer] Geen categoryId in placement voor EAN ${ean}`);
         continue;
       }
 
-      const categoryPath = client.extractCategoryPath(placement);
+      const categoryPath = extractCategoryPath(placement);
       const categoryName = categoryPath?.split(' > ').pop() ?? null;
 
       // Genereer slug van category naam
