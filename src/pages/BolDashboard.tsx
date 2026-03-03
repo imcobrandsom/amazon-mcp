@@ -2183,9 +2183,10 @@ interface PhaseState { status: PhaseStatus; message: string }
 
 function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
   const [phases, setPhases] = useState<Record<BolSyncType, PhaseState>>({
-    main:     { status: 'idle', message: '' },
-    complete: { status: 'idle', message: '' },
-    extended: { status: 'idle', message: '' },
+    main:       { status: 'idle', message: '' },
+    complete:   { status: 'idle', message: '' },
+    extended:   { status: 'idle', message: '' },
+    competitor: { status: 'idle', message: '' },
   });
   const [runningAll, setRunningAll] = useState(false);
 
@@ -2240,11 +2241,21 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
         } else {
           message = `${c} export${c !== 1 ? 's' : ''} processed`;
         }
-      } else {
-        // extended
+      } else if (phase === 'extended') {
         const d = result.detail ?? {};
         message = [d.competitors, d.rankings, d.catalog].filter(Boolean).join(' · ') || 'Done';
         if (result.message) { finalStatus = 'pending'; message = result.message; }
+      } else if (phase === 'competitor') {
+        // competitor analysis
+        const catCount = result.categories_analyzed ?? 0;
+        const prodCount = result.competitors_found ?? 0;
+        const kwCount = result.keywords_analyzed ?? 0;
+        const parts: string[] = [];
+        if (catCount > 0) parts.push(`${catCount} categories`);
+        if (prodCount > 0) parts.push(`${prodCount} competitors`);
+        if (kwCount > 0) parts.push(`${kwCount} keywords`);
+        message = parts.join(' · ') || 'Done';
+        if (result.error) { finalStatus = 'error'; message = result.error; }
       }
 
       setPhase(phase, { status: finalStatus, message });
@@ -2269,15 +2280,18 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
         await runPhase('complete');
       }
       await runPhase('extended');
+      // Run competitor analysis after extended sync (uses category data from extended)
+      await runPhase('competitor');
     } finally {
       setRunningAll(false);
     }
   };
 
   const PHASES: Array<{ id: BolSyncType; label: string; sub: string }> = [
-    { id: 'main',     label: '1. Main Sync',     sub: 'Inventory · Orders · Ads' },
-    { id: 'complete', label: '2. Process Offers', sub: 'CSV download + analysis' },
-    { id: 'extended', label: '3. Extended Data',  sub: 'Competitors · Keywords'  },
+    { id: 'main',       label: '1. Main Sync',          sub: 'Inventory · Orders · Ads' },
+    { id: 'complete',   label: '2. Process Offers',     sub: 'CSV download + analysis' },
+    { id: 'extended',   label: '3. Extended Data',      sub: 'Competitors · Keywords'  },
+    { id: 'competitor', label: '4. Competitor Analysis', sub: 'Categories · Content · Keywords' },
   ];
 
   const isAnyRunning = Object.values(phases).some(p => p.status === 'running') || runningAll;

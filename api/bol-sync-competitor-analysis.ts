@@ -100,7 +100,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 async function processCustomer(customer: any, supabase: any) {
   const token = await getBolToken(customer.bol_client_id, customer.bol_client_secret);
-  const detail: Record<string, string> = {};
+  const detail: Record<string, any> = {};
+  const stats = {
+    categories_analyzed: 0,
+    competitors_found: 0,
+    keywords_analyzed: 0,
+  };
 
   // ── STAP 1: Categorieboom ophalen ─────────────────────────────────────────
   console.log(`[processCustomer] STAP 1: Categorieboom ophalen`);
@@ -232,7 +237,10 @@ async function processCustomer(customer: any, supabase: any) {
         supabase,
         eans
       );
-      categoryResults.push(`${catInfo.categorySlug}: ${catResult}`);
+      stats.categories_analyzed++;
+      stats.competitors_found += catResult.competitors_found || 0;
+      stats.keywords_analyzed += catResult.keywords_analyzed || 0;
+      categoryResults.push(`${catInfo.categorySlug}: ${catResult.message}`);
     } catch (err) {
       console.error(`Error processing category ${catInfo.categorySlug}:`, err);
       categoryResults.push(`${catInfo.categorySlug}: error - ${(err as Error).message}`);
@@ -243,6 +251,9 @@ async function processCustomer(customer: any, supabase: any) {
   }
 
   detail.categoryResults = categoryResults.join('; ');
+  detail.categories_analyzed = stats.categories_analyzed;
+  detail.competitors_found = stats.competitors_found;
+  detail.keywords_analyzed = stats.keywords_analyzed;
   return detail;
 }
 
@@ -495,7 +506,13 @@ async function processCategory(
     console.log(`[processCategory] Keyword volumes toegevoegd voor ${enrichedKeywords.length} keywords`);
   }
 
-  return `${catalogInserts.length} products, ${enriched} enriched, ${analysisInserts.length} analyzed`;
+  const keywordCount = insight?.trending_keywords ? (insight.trending_keywords as any[]).length : 0;
+
+  return {
+    message: `${catalogInserts.length} products, ${enriched} enriched, ${analysisInserts.length} analyzed`,
+    competitors_found: catalogInserts.length,
+    keywords_analyzed: keywordCount,
+  };
 }
 
 /**

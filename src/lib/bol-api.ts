@@ -219,7 +219,7 @@ export async function getBolCompetitorCatalog(
 
 // ── Dashboard-initiated sync ──────────────────────────────────────────────────
 
-export type BolSyncType = 'main' | 'complete' | 'extended';
+export type BolSyncType = 'main' | 'complete' | 'extended' | 'competitor';
 
 export interface BolSyncResult {
   customer_id?: string;
@@ -239,7 +239,14 @@ export interface BolSyncResult {
   still_pending?: number;
   results?: Array<{ jobId: string; status: string; detail: string }>;
   // extended
-  detail?: { competitors?: string; rankings?: string; catalog?: string };
+  detail?: { competitors?: string; rankings?: string; catalog?: string; categories_detected?: string; unique_categories?: string };
+  // competitor analysis
+  categories_detected?: number;
+  categories_processed?: number;
+  categories_analyzed?: number;
+  competitors_found?: number;
+  insights_generated?: number;
+  keywords_analyzed?: number;
   // common
   error?: string;
   message?: string;

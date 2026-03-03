@@ -72,8 +72,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const { customerId, syncType } = req.body ?? {};
   if (!customerId) return res.status(400).json({ error: 'customerId is required' });
-  if (!['main', 'complete', 'extended'].includes(syncType)) {
-    return res.status(400).json({ error: "syncType must be 'main', 'complete', or 'extended'" });
+  if (!['main', 'complete', 'extended', 'competitor'].includes(syncType)) {
+    return res.status(400).json({ error: "syncType must be 'main', 'complete', 'extended', or 'competitor'" });
   }
 
   const supabase  = createAdminClient();
@@ -625,16 +625,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     detail.competitors = `${competitorCount}/${eans.length} EANs updated`;
 
     // Block 2: Keyword rankings
+    // Note: getProductRanks now requires a date parameter - use yesterday
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dateStr = yesterday.toISOString().split('T')[0];
+
     let rankCount = 0;
     for (const ean of eans) {
       try {
         const [searchRanks, browseRanks] = await Promise.all([
-          getProductRanks(token, ean, 'SEARCH'),
-          getProductRanks(token, ean, 'BROWSE'),
+          getProductRanks(token, ean, dateStr, 'SEARCH'),
+          getProductRanks(token, ean, dateStr, 'BROWSE'),
         ]);
         const rows: Array<{ bol_customer_id: string; ean: string; search_type: string; rank: number; impressions: number; week_of: string }> = [];
-        for (const rank of searchRanks) rows.push({ bol_customer_id: customerId, ean, search_type: 'SEARCH', rank: rank.rank, impressions: rank.impressions, week_of: rank.weekStartDate });
-        for (const rank of browseRanks) rows.push({ bol_customer_id: customerId, ean, search_type: 'BROWSE', rank: rank.rank, impressions: rank.impressions, week_of: rank.weekStartDate });
+        // New response format: { ranks: BolProductRank[], hasNextPage: boolean }
+        for (const rank of searchRanks.ranks) rows.push({ bol_customer_id: customerId, ean, search_type: 'SEARCH', rank: rank.rank, impressions: rank.impressions, week_of: dateStr });
+        for (const rank of browseRanks.ranks) rows.push({ bol_customer_id: customerId, ean, search_type: 'BROWSE', rank: rank.rank, impressions: rank.impressions, week_of: dateStr });
         if (rows.length > 0) { await supabase.from('bol_keyword_rankings').insert(rows); rankCount++; }
       } catch { /* skip */ }
       await sleep(100);
@@ -672,6 +678,85 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       duration_ms: Date.now() - startedAt,
       detail,
     });
+  }
+
+  // ── syncType: competitor ───────────────────────────────────────────────────────
+  if (syncType === 'competitor') {
+    // This triggers the full competitor analysis sync (8-step flow)
+    // Note: This is a heavy operation that can take 10-15 minutes on first run
+    try {
+      // Import and execute the competitor analysis sync directly
+      const { default: competitorAnalysisHandler } = await import('./bol-sync-competitor-analysis.js');
+
+      // Create a mock request with authorization header for internal call
+      const mockReq = {
+        method: 'POST',
+        headers: {
+          authorization: req.headers.authorization, // Pass through auth
+        },
+        query: {},
+        body: { customerId }, // Pass customerId in body
+      } as VercelRequest;
+
+      // Create a response capture object
+      let responseData: any = null;
+      let responseStatus = 200;
+      const mockRes = {
+        status: (code: number) => {
+          responseStatus = code;
+          return mockRes;
+        },
+        json: (data: any) => {
+          responseData = data;
+          return mockRes;
+        },
+      } as VercelResponse;
+
+      // Execute the competitor analysis sync
+      await competitorAnalysisHandler(mockReq, mockRes);
+
+      // Transform response to match BolSyncResult format
+      if (responseStatus !== 200 || !responseData) {
+        return res.status(responseStatus).json(responseData || { error: 'Competitor analysis failed' });
+      }
+
+      // Extract results from competitor analysis response
+      const results = responseData.results || [];
+      const customerResult = results.find((r: any) => r.customerId === customerId);
+
+      if (!customerResult || customerResult.status === 'error') {
+        return res.status(500).json({
+          error: customerResult?.detail?.error || 'Competitor analysis failed',
+          message: responseData.message,
+          duration_ms: Date.now() - startedAt,
+        });
+      }
+
+      // Extract stats from detail object
+      const detail = customerResult.detail || {};
+      const categoriesDetected = detail.categoriesDetected?.match(/(\d+)\//) ?
+        parseInt(detail.categoriesDetected.match(/(\d+)\//)[1]) : 0;
+      const uniqueCategories = detail.uniqueCategories?.match(/(\d+)/) ?
+        parseInt(detail.uniqueCategories.match(/(\d+)/)[1]) : 0;
+
+      return res.status(200).json({
+        customer_id: customerId,
+        seller_name: customer.seller_name,
+        duration_ms: Date.now() - startedAt,
+        categories_detected: categoriesDetected,
+        categories_processed: uniqueCategories,
+        categories_analyzed: detail.categories_analyzed || 0,
+        competitors_found: detail.competitors_found || 0,
+        keywords_analyzed: detail.keywords_analyzed || 0,
+        message: responseData.message || 'Competitor analysis completed',
+        detail,
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: `Competitor analysis failed: ${(e as Error).message}`,
+        duration_ms: Date.now() - startedAt,
+      });
+    }
   }
 
   return res.status(400).json({ error: 'Unknown syncType' });
