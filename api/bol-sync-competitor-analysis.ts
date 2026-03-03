@@ -314,6 +314,9 @@ async function processCategory(
   const competitorEans = new Map<string, string>(); // ean → title
 
   // Pagineer door category producten (max 10 pagina's = 500 producten)
+  let totalProducts = 0;
+  let ownProductsFiltered = 0;
+
   for (let page = 1; page <= 10; page++) {
     try {
       const { products } = await getProductList(token, {
@@ -322,22 +325,35 @@ async function processCategory(
         page,
       });
 
-      if (products.length === 0) break;
+      if (products.length === 0) {
+        console.log(`[processCategory] Pagina ${page}: geen producten meer, stoppen`);
+        break;
+      }
+
+      totalProducts += products.length;
 
       for (const product of products) {
         const ean = product.eans?.[0]?.ean;
-        if (!ean) continue;
-        if (yourEans.has(ean)) continue; // filter eigen producten
+        if (!ean) {
+          console.log(`[processCategory] Product zonder EAN: ${product.title}`);
+          continue;
+        }
+        if (yourEans.has(ean)) {
+          ownProductsFiltered++;
+          continue; // filter eigen producten
+        }
         competitorEans.set(ean, product.title);
       }
 
-      console.log(`[processCategory] Pagina ${page}: ${products.length} producten, totaal ${competitorEans.size} concurrenten`);
+      console.log(`[processCategory] Pagina ${page}: ${products.length} producten (${ownProductsFiltered} eigen), totaal ${competitorEans.size} concurrenten`);
       await sleep(150);
     } catch (err) {
       console.warn(`[processCategory] Product list mislukt pagina ${page}:`, err);
       break;
     }
   }
+
+  console.log(`[processCategory] STAP 3C resultaat: ${totalProducts} producten gezien, ${ownProductsFiltered} eigen gefilterd, ${competitorEans.size} concurrenten gevonden`);
 
   console.log(`[processCategory] Totaal ${competitorEans.size} concurrenten gevonden`);
 
@@ -354,9 +370,13 @@ async function processCategory(
   }));
 
   if (catalogInserts.length > 0) {
+    console.log(`[processCategory] Inserting ${catalogInserts.length} competitors in database`);
     await supabase
       .from('bol_competitor_catalog')
       .upsert(catalogInserts, { onConflict: 'bol_customer_id,competitor_ean,category_slug' });
+  } else {
+    console.warn(`[processCategory] ⚠️ GEEN COMPETITORS gevonden voor ${category.categorySlug}!`);
+    console.warn(`[processCategory] Mogelijke oorzaken: alle producten zijn eigen producten, of categorie is leeg`);
   }
 
   // ── STAP 3D: Content enrichment via getCatalogProduct ─────────────────────
