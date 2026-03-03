@@ -5,8 +5,12 @@
  *
  * Requires: SUPABASE_URL and SUPABASE_SERVICE_KEY in .env.local
  */
+import { config } from 'dotenv';
 import { readFileSync } from 'fs';
 import { createClient } from '@supabase/supabase-js';
+
+// Load .env.local
+config({ path: '.env.local' });
 
 interface JsonArticle {
   title: string;
@@ -50,17 +54,32 @@ async function main() {
   }
 
   // Transform and insert
-  const rows = articles.map(a => ({
-    title: a.title,
-    subtitle: a.subtitle || null,
-    slug: a.slug,
-    category: a.category || 'Overig',
-    subcategory: a.subcategory || null,
-    keywords: a.keywords || null,
-    body: a.body,
-    last_modified_date: a.lastModified ? new Date(a.lastModified).toISOString() : null,
-    is_published: true,
-  }));
+  const rows = articles.map(a => {
+    // Parse date safely
+    let lastModifiedDate = null;
+    if (a.lastModified && a.lastModified.trim() !== '') {
+      try {
+        const parsed = new Date(a.lastModified);
+        if (!isNaN(parsed.getTime())) {
+          lastModifiedDate = parsed.toISOString();
+        }
+      } catch (e) {
+        // Skip invalid dates
+      }
+    }
+
+    return {
+      title: a.title,
+      subtitle: a.subtitle || null,
+      slug: a.slug,
+      category: a.category || 'Overig',
+      subcategory: a.subcategory || null,
+      keywords: a.keywords || null,
+      body: a.body,
+      last_modified_date: lastModifiedDate,
+      is_published: true,
+    };
+  });
 
   // Insert in batches of 100
   const batchSize = 100;
