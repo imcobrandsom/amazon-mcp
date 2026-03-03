@@ -418,9 +418,14 @@ async function processCategory(
 
   if (catalogInserts.length > 0) {
     console.log(`[processCategory] Inserting ${catalogInserts.length} competitors in database`);
-    await supabase
+    const { error: catalogUpsertError } = await supabase
       .from('bol_competitor_catalog')
       .upsert(catalogInserts, { onConflict: 'bol_customer_id,competitor_ean,category_slug' });
+    if (catalogUpsertError) {
+      console.error(`[processCategory] ❌ CATALOG UPSERT FAILED for ${category.categorySlug}:`, catalogUpsertError);
+    } else {
+      console.log(`[processCategory] ✅ Catalog upsert OK: ${catalogInserts.length} rows`);
+    }
   } else {
     console.warn(`[processCategory] ⚠️ GEEN COMPETITORS gevonden voor ${category.categorySlug}!`);
     console.warn(`[processCategory] Mogelijke oorzaken: alle producten zijn eigen producten, of categorie is leeg`);
@@ -484,21 +489,27 @@ async function processCategory(
   console.log(`[processCategory] STAP 6: AI analyse`);
 
   // Get EANs that already have analysis
-  const { data: existingAnalysis } = await supabase
+  const { data: existingAnalysis, error: existingAnalysisError } = await supabase
     .from('bol_competitor_content_analysis')
     .select('competitor_ean')
     .eq('bol_customer_id', customerId)
-    .eq('category_slug', category.categorySlug);
+    .eq('category_slug', category.categorySlug)
+    .limit(1000);
+
+  if (existingAnalysisError) {
+    console.error(`[processCategory] ❌ Failed to fetch existing analysis:`, existingAnalysisError);
+  }
 
   const analyzedEans = new Set((existingAnalysis || []).map((a: any) => a.competitor_ean));
-  console.log(`[processCategory] Already analyzed: ${analyzedEans.size} products`);
+  console.log(`[processCategory] Already analyzed: ${analyzedEans.size} products (raw rows fetched: ${existingAnalysis?.length ?? 0})`);
 
   // Get ALL catalog products for this category
   const { data: allCatalogProducts } = await supabase
     .from('bol_competitor_catalog')
     .select('competitor_ean, title, description, brand, list_price, attributes')
     .eq('bol_customer_id', customerId)
-    .eq('category_slug', category.categorySlug);
+    .eq('category_slug', category.categorySlug)
+    .limit(1000); // Supabase default cap is 1000 — make it explicit
 
   // Filter to only products that haven't been analyzed yet, then limit to 50
   const catalogProducts = (allCatalogProducts || [])
@@ -537,9 +548,14 @@ async function processCategory(
   }));
 
   if (analysisInserts.length > 0) {
-    await supabase
+    const { error: analysisUpsertError } = await supabase
       .from('bol_competitor_content_analysis')
       .upsert(analysisInserts, { onConflict: 'bol_customer_id,competitor_ean,category_slug' });
+    if (analysisUpsertError) {
+      console.error(`[processCategory] ❌ ANALYSIS UPSERT FAILED for ${category.categorySlug}:`, analysisUpsertError);
+    } else {
+      console.log(`[processCategory] ✅ Analysis upsert OK: ${analysisInserts.length} rows`);
+    }
   }
 
   console.log(`[processCategory] AI analyse: ${analysisInserts.length} producten geanalyseerd`);
