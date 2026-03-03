@@ -237,19 +237,58 @@ async function processCustomer(customer: any, supabase: any, maxCategories: numb
   const categoryResults: string[] = [];
   let processedCount = 0;
 
-  // Check which categories already have recent data (fetched in last hour)
-  const oneHourAgo = new Date();
-  oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+  // Check which categories have been fully analyzed (all products analyzed)
+  // A category is "done" if it has analyzed products AND no unanalyzed products remain
+  const { data: categoryAnalysisStatus } = await supabase.rpc('get_category_analysis_status', {
+    p_customer_id: customer.id
+  }).catch(() => ({ data: null })); // Fallback if RPC doesn't exist
 
-  const { data: recentCategories } = await supabase
-    .from('bol_competitor_catalog')
-    .select('category_slug')
-    .eq('bol_customer_id', customer.id)
-    .gte('fetched_at', oneHourAgo.toISOString());
+  const fullyAnalyzedCategories = new Set<string>();
 
-  const recentlySynced = new Set((recentCategories || []).map((c: any) => c.category_slug));
+  // Fallback: check manually if RPC doesn't exist
+  if (!categoryAnalysisStatus) {
+    // Get all categories with catalog data
+    const { data: allCatalog } = await supabase
+      .from('bol_competitor_catalog')
+      .select('category_slug, competitor_ean')
+      .eq('bol_customer_id', customer.id);
 
-  console.log(`[processCustomer] ${recentlySynced.size} categories already synced in last hour, will skip these`);
+    // Get all categories with analysis
+    const { data: allAnalysis } = await supabase
+      .from('bol_competitor_content_analysis')
+      .select('category_slug, competitor_ean')
+      .eq('bol_customer_id', customer.id);
+
+    // Group by category
+    const catalogByCategory = new Map<string, Set<string>>();
+    const analysisByCategory = new Map<string, Set<string>>();
+
+    (allCatalog || []).forEach((c: any) => {
+      if (!catalogByCategory.has(c.category_slug)) {
+        catalogByCategory.set(c.category_slug, new Set());
+      }
+      catalogByCategory.get(c.category_slug)!.add(c.competitor_ean);
+    });
+
+    (allAnalysis || []).forEach((a: any) => {
+      if (!analysisByCategory.has(a.category_slug)) {
+        analysisByCategory.set(a.category_slug, new Set());
+      }
+      analysisByCategory.get(a.category_slug)!.add(a.competitor_ean);
+    });
+
+    // A category is fully analyzed if all catalog EANs have been analyzed
+    for (const [catSlug, catalogEans] of catalogByCategory.entries()) {
+      const analyzedEans = analysisByCategory.get(catSlug) || new Set();
+      const allAnalyzed = Array.from(catalogEans).every(ean => analyzedEans.has(ean));
+      if (allAnalyzed && catalogEans.size > 0) {
+        fullyAnalyzedCategories.add(catSlug);
+      }
+    }
+  }
+
+  const recentlySynced = fullyAnalyzedCategories;
+  console.log(`[processCustomer] ${recentlySynced.size} categories fully analyzed, will process incomplete ones first`);
 
   for (const [catId, catInfo] of uniqueCategories.entries()) {
     // Skip categories that were recently synced
@@ -451,13 +490,29 @@ async function processCategory(
   // ── STAP 6: AI analyse ────────────────────────────────────────────────────
   console.log(`[processCategory] STAP 6: AI analyse`);
 
-  // Haal volledige catalog data op voor analyse (limit to 50 to speed up)
-  const { data: catalogProducts } = await supabase
+  // Get EANs that already have analysis
+  const { data: existingAnalysis } = await supabase
+    .from('bol_competitor_content_analysis')
+    .select('competitor_ean')
+    .eq('bol_customer_id', customerId)
+    .eq('category_slug', category.categorySlug);
+
+  const analyzedEans = new Set((existingAnalysis || []).map((a: any) => a.competitor_ean));
+  console.log(`[processCategory] Already analyzed: ${analyzedEans.size} products`);
+
+  // Get ALL catalog products for this category
+  const { data: allCatalogProducts } = await supabase
     .from('bol_competitor_catalog')
     .select('competitor_ean, title, description, brand, list_price, attributes')
     .eq('bol_customer_id', customerId)
-    .eq('category_slug', category.categorySlug)
-    .limit(50); // Reduced from 100 to 50 for faster processing
+    .eq('category_slug', category.categorySlug);
+
+  // Filter to only products that haven't been analyzed yet, then limit to 50
+  const catalogProducts = (allCatalogProducts || [])
+    .filter((p: any) => !analyzedEans.has(p.competitor_ean))
+    .slice(0, 50); // Process 50 unanalyzed products per run
+
+  console.log(`[processCategory] Found ${(allCatalogProducts || []).length} total products, analyzing ${catalogProducts.length} new ones`);
 
   const productsToAnalyze = (catalogProducts ?? []).map((c: any) => ({
     competitor_ean: c.competitor_ean,
