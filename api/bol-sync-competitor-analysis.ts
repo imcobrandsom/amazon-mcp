@@ -250,78 +250,88 @@ async function processCategory(
     return 'No products in category';
   }
 
-  // ── Discover all products in category via API ─────────────────────────
-  if (!category.categoryId) {
-    return 'No categoryId available, skipping discovery';
+  // ── Get competitor EANs from existing snapshots ───────────────────────
+  const yourEansArray = Array.from(yourEans);
+
+  // Get competitor snapshots for YOUR products in this category
+  const { data: competitorSnaps } = await supabase
+    .from('bol_competitor_snapshots')
+    .select('ean, competitor_prices')
+    .eq('bol_customer_id', customerId)
+    .in('ean', yourEansArray);
+
+  if (!competitorSnaps || competitorSnaps.length === 0) {
+    return 'No competitor snapshots found for products in this category';
   }
 
-  let allProducts: any[] = [];
-  let page = 1;
-  const maxPages = 4; // Limit to 200 products (50 per page)
+  // Aggregate competitor EANs and rank by frequency
+  const competitorFrequency = new Map<string, {
+    ean: string;
+    frequency: number;
+    prices: number[];
+  }>();
 
-  while (page <= maxPages) {
-    const { products, totalCount } = await getProductsByCategory(token, {
-      categoryId: category.categoryId,
-      countryCode: 'NL',
-      page,
-    });
+  for (const snap of competitorSnaps) {
+    const competitorPrices = snap.competitor_prices || [];
 
-    if (products.length === 0) break;
+    for (const offer of competitorPrices) {
+      const competitorEan = offer.ean || offer.EAN;
+      if (!competitorEan || yourEans.has(competitorEan)) continue; // Skip if it's your own product
 
-    allProducts.push(...products);
-    page++;
+      const existing = competitorFrequency.get(competitorEan) || {
+        ean: competitorEan,
+        frequency: 0,
+        prices: []
+      };
 
-    // Rate limit
-    await sleep(200);
+      existing.frequency++;
+      if (offer.price) existing.prices.push(offer.price);
 
-    // Stop if we've fetched all products
-    if (allProducts.length >= totalCount) break;
+      competitorFrequency.set(competitorEan, existing);
+    }
   }
 
-  if (allProducts.length === 0) {
-    return 'No products found in category';
-  }
+  // Rank by frequency and take top 100
+  const rankedCompetitors = Array.from(competitorFrequency.values())
+    .sort((a, b) => b.frequency - a.frequency)
+    .slice(0, 100)
+    .map((c, idx) => ({
+      ean: c.ean,
+      frequency: c.frequency,
+      rank: idx + 1,
+      avgPrice: c.prices.length > 0 ? c.prices.reduce((sum, p) => sum + p, 0) / c.prices.length : null
+    }));
 
-  // ── Parse and store competitor catalog data ───────────────────────────
-  const catalogInserts = [];
-
-  for (const product of allProducts) {
-    const parsed = parseProductListItem(product);
-    if (!parsed.ean) continue;
-
-    const isCustomerProduct = yourEans.has(parsed.ean);
-
-    catalogInserts.push({
-      bol_customer_id: customerId,
-      category_slug: category.categorySlug,
-      category_id: category.categoryId,
-      competitor_ean: parsed.ean,
-      title: parsed.title,
-      description: null, // Will be enriched with full catalog data later
-      brand: parsed.brand,
-      list_price: parsed.listPrice,
-      is_customer_product: isCustomerProduct,
-      relevance_score: null,
-      attributes: null,
-      fetched_at: new Date().toISOString(),
-    });
-  }
-
-  if (catalogInserts.length > 0) {
-    await supabase.from('bol_competitor_catalog').insert(catalogInserts);
+  if (rankedCompetitors.length === 0) {
+    return 'No competitors found in snapshots';
   }
 
   // ── Fetch full catalog data for top 100 competitors ───────────────────
-  const competitors = catalogInserts.filter(c => !c.is_customer_product);
-  const top100 = competitors.slice(0, 100);
+  const catalogInserts = [];
+  const top100 = rankedCompetitors;
 
   let enriched = 0;
   for (const comp of top100) {
     try {
-      const catalog = await getCatalogProduct(token, comp.competitor_ean);
+      const catalog = await getCatalogProduct(token, comp.ean);
       if (catalog) {
-        comp.description = (catalog as any).description || null;
-        comp.attributes = (catalog as any).attributes || null;
+        const catalogData = catalog as any;
+
+        catalogInserts.push({
+          bol_customer_id: customerId,
+          category_slug: category.categorySlug,
+          competitor_ean: comp.ean,
+          title: catalogData.title || catalogData.name || null,
+          description: catalogData.description || null,
+          brand: catalogData.brand || null,
+          price: comp.avgPrice,
+          buy_box_winner: false, // Will be determined from snapshots
+          frequency_rank: comp.rank,
+          category_path: category.categoryPath,
+          attributes: catalogData.attributes || null,
+          fetched_at: new Date().toISOString()
+        });
+
         enriched++;
       }
     } catch (_) {
@@ -330,29 +340,18 @@ async function processCategory(
     await sleep(150); // Rate limit
   }
 
-  // Update competitor catalog with full data
-  for (const comp of top100) {
-    if (comp.description || comp.attributes) {
-      await supabase
-        .from('bol_competitor_catalog')
-        .update({
-          description: comp.description,
-          attributes: comp.attributes,
-        })
-        .eq('bol_customer_id', customerId)
-        .eq('category_slug', category.categorySlug)
-        .eq('competitor_ean', comp.competitor_ean)
-        .gte('fetched_at', new Date(Date.now() - 60000).toISOString()); // Last minute
-    }
+  // Insert catalog data
+  if (catalogInserts.length > 0) {
+    await supabase.from('bol_competitor_catalog').insert(catalogInserts);
   }
 
   // ── Run AI content analysis ───────────────────────────────────────────
-  const productsToAnalyze = top100.map(c => ({
+  const productsToAnalyze = catalogInserts.map(c => ({
     competitor_ean: c.competitor_ean,
     title: c.title,
     description: c.description,
     brand: c.brand,
-    list_price: c.list_price,
+    list_price: c.price,
   }));
 
   const analysisResults = await analyzeCompetitorContent(
