@@ -239,51 +239,44 @@ async function processCustomer(customer: any, supabase: any, maxCategories: numb
 
   // Check which categories have been fully analyzed (all products analyzed)
   // A category is "done" if it has analyzed products AND no unanalyzed products remain
-  const { data: categoryAnalysisStatus } = await supabase.rpc('get_category_analysis_status', {
-    p_customer_id: customer.id
-  }).catch(() => ({ data: null })); // Fallback if RPC doesn't exist
-
   const fullyAnalyzedCategories = new Set<string>();
 
-  // Fallback: check manually if RPC doesn't exist
-  if (!categoryAnalysisStatus) {
-    // Get all categories with catalog data
-    const { data: allCatalog } = await supabase
-      .from('bol_competitor_catalog')
-      .select('category_slug, competitor_ean')
-      .eq('bol_customer_id', customer.id);
+  // Get all categories with catalog data
+  const { data: allCatalog } = await supabase
+    .from('bol_competitor_catalog')
+    .select('category_slug, competitor_ean')
+    .eq('bol_customer_id', customer.id);
 
-    // Get all categories with analysis
-    const { data: allAnalysis } = await supabase
-      .from('bol_competitor_content_analysis')
-      .select('category_slug, competitor_ean')
-      .eq('bol_customer_id', customer.id);
+  // Get all categories with analysis
+  const { data: allAnalysis } = await supabase
+    .from('bol_competitor_content_analysis')
+    .select('category_slug, competitor_ean')
+    .eq('bol_customer_id', customer.id);
 
-    // Group by category
-    const catalogByCategory = new Map<string, Set<string>>();
-    const analysisByCategory = new Map<string, Set<string>>();
+  // Group by category
+  const catalogByCategory = new Map<string, Set<string>>();
+  const analysisByCategory = new Map<string, Set<string>>();
 
-    (allCatalog || []).forEach((c: any) => {
-      if (!catalogByCategory.has(c.category_slug)) {
-        catalogByCategory.set(c.category_slug, new Set());
-      }
-      catalogByCategory.get(c.category_slug)!.add(c.competitor_ean);
-    });
+  (allCatalog || []).forEach((c: any) => {
+    if (!catalogByCategory.has(c.category_slug)) {
+      catalogByCategory.set(c.category_slug, new Set());
+    }
+    catalogByCategory.get(c.category_slug)!.add(c.competitor_ean);
+  });
 
-    (allAnalysis || []).forEach((a: any) => {
-      if (!analysisByCategory.has(a.category_slug)) {
-        analysisByCategory.set(a.category_slug, new Set());
-      }
-      analysisByCategory.get(a.category_slug)!.add(a.competitor_ean);
-    });
+  (allAnalysis || []).forEach((a: any) => {
+    if (!analysisByCategory.has(a.category_slug)) {
+      analysisByCategory.set(a.category_slug, new Set());
+    }
+    analysisByCategory.get(a.category_slug)!.add(a.competitor_ean);
+  });
 
-    // A category is fully analyzed if all catalog EANs have been analyzed
-    for (const [catSlug, catalogEans] of catalogByCategory.entries()) {
-      const analyzedEans = analysisByCategory.get(catSlug) || new Set();
-      const allAnalyzed = Array.from(catalogEans).every(ean => analyzedEans.has(ean));
-      if (allAnalyzed && catalogEans.size > 0) {
-        fullyAnalyzedCategories.add(catSlug);
-      }
+  // A category is fully analyzed if all catalog EANs have been analyzed
+  for (const [catSlug, catalogEans] of catalogByCategory.entries()) {
+    const analyzedEans = analysisByCategory.get(catSlug) || new Set();
+    const allAnalyzed = Array.from(catalogEans).every(ean => analyzedEans.has(ean));
+    if (allAnalyzed && catalogEans.size > 0) {
+      fullyAnalyzedCategories.add(catSlug);
     }
   }
 
