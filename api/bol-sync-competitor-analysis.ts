@@ -95,7 +95,25 @@ async function processCustomer(customer: any, supabase: any) {
   const token = await getBolToken(customer.bol_client_id, customer.bol_client_secret);
   const detail: Record<string, string> = {};
 
-  // ── Step 1: Check if product categories already exist ─────────────────
+  // ── Step 1: Get EANs from competitor snapshots (most reliable source) ──
+  // Use the EANs from competitor snapshots since those are guaranteed to exist
+  // and match what Extended Sync populated
+  const { data: competitorSnapshots } = await supabase
+    .from('bol_competitor_snapshots')
+    .select('ean')
+    .eq('bol_customer_id', customer.id)
+    .order('fetched_at', { ascending: false })
+    .limit(200); // Get up to 200 unique products
+
+  if (!competitorSnapshots || competitorSnapshots.length === 0) {
+    detail.categories = 'No competitor snapshots found. Run Extended Sync first.';
+    return detail;
+  }
+
+  const eans = [...new Set(competitorSnapshots.map((s: any) => s.ean))].filter(Boolean).slice(0, 50);
+  console.log(`[processCustomer] Found ${eans.length} EANs from competitor snapshots`);
+
+  // Check if we need to refresh product categories
   const { count: existingCategoriesCount } = await supabase
     .from('bol_product_categories')
     .select('id', { count: 'exact', head: true })
@@ -104,36 +122,22 @@ async function processCustomer(customer: any, supabase: any) {
   let categoryInserts = [];
   let catalogFetched = 0;
 
-  // Only populate product categories if they don't exist yet
-  if (existingCategoriesCount === 0) {
-    console.log(`[processCustomer] No product categories found. Fetching from listings...`);
+  // Refresh categories if count doesn't match or if they're all uncategorized
+  const needsRefresh = existingCategoriesCount === 0 || existingCategoriesCount !== eans.length;
 
-    // Get EANs from listings snapshot
-    const { data: rawSnapshots } = await supabase
-      .from('bol_raw_snapshots')
-      .select('raw_data')
-      .eq('bol_customer_id', customer.id)
-      .eq('data_type', 'listings')
-      .order('fetched_at', { ascending: false })
-      .limit(1)
-      .single();
+  if (needsRefresh) {
+    console.log(`[processCustomer] Refreshing product categories (found ${existingCategoriesCount}, need ${eans.length})`);
 
-    if (!rawSnapshots?.raw_data?.offers || !Array.isArray(rawSnapshots.raw_data.offers)) {
-      detail.categories = 'No listings data available yet';
-      return detail;
+    // Delete old categories if they exist
+    if (existingCategoriesCount > 0) {
+      await supabase
+        .from('bol_product_categories')
+        .delete()
+        .eq('bol_customer_id', customer.id);
+      console.log(`[processCustomer] Deleted ${existingCategoriesCount} old categories`);
     }
 
-    const offers = rawSnapshots.raw_data.offers as Array<{ ean?: string; EAN?: string }>;
-    const eans = [...new Set(offers.map(o => o.ean || o.EAN).filter(Boolean))].slice(0, 50);
-
-    if (eans.length === 0) {
-      detail.categories = 'No EANs found in listings';
-      return detail;
-    }
-
-    console.log(`[processCustomer] Found ${eans.length} unique EANs for customer ${customer.id}`);
-
-    // Fetch catalog data for each EAN
+    // Fetch catalog data for each EAN from competitor snapshots
     for (const ean of eans) {
       try {
         const catalog = await getCatalogProduct(token, ean);
