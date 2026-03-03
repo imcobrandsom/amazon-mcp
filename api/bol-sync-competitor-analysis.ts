@@ -121,10 +121,21 @@ async function processCustomer(customer: any, supabase: any) {
 
   // ── STAP 1: Categorieboom ophalen ─────────────────────────────────────────
   console.log(`[processCustomer] STAP 1: Categorieboom ophalen`);
-  const categoryTree = await getProductCategories(token);
-  const categoryMap = flattenCategoryTree(categoryTree);
-  detail.categoryTreeSize = `${categoryMap.size} categories`;
-  console.log(`[processCustomer] Categorieboom geladen: ${categoryMap.size} categorieën`);
+  let categoryMap: Map<string, string>;
+  try {
+    const categoryTree = await getProductCategories(token);
+    categoryMap = flattenCategoryTree(categoryTree);
+    detail.categoryTreeSize = `${categoryMap.size} categories`;
+    console.log(`[processCustomer] Categorieboom geladen: ${categoryMap.size} categorieën`);
+  } catch (err) {
+    const errMsg = (err as Error).message;
+    console.error(`[processCustomer] STAP 1 gefaald:`, errMsg);
+    // If rate limited or API error, we can still continue without category tree
+    // Category names will come from product-ranks API instead
+    categoryMap = new Map();
+    detail.categoryTreeSize = `0 categories (API error: ${errMsg})`;
+    detail.categoryTreeError = errMsg;
+  }
 
   // ── STAP 2: Categorie detecteren per eigen EAN ────────────────────────────
   console.log(`[processCustomer] STAP 2: Categorie detecteren`);
@@ -167,13 +178,12 @@ async function processCustomer(customer: any, supabase: any) {
       );
 
       const categoryId = topRank.categoryId;
-      const categoryName = categoryMap.get(categoryId) ?? 'Onbekend';
+      const categoryName = categoryMap.get(categoryId) ?? null;
 
-      // Genereer slug vanuit naam (veiliger dan van path)
+      // Genereer slug: gebruik categoryId als fallback als naam onbekend is
       const categorySlug = categoryName
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '');
+        ? categoryName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+        : `cat-${categoryId}`.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
 
       categoryInserts.push({
         bol_customer_id: customer.id,
@@ -181,7 +191,7 @@ async function processCustomer(customer: any, supabase: any) {
         category_id: categoryId,
         category_name: categoryName,
         category_slug: categorySlug,
-        category_path: categoryName, // Voor backward compatibility
+        category_path: categoryName || categoryId, // Voor backward compatibility
         fetched_at: new Date().toISOString(),
       });
 
