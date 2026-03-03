@@ -55,6 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Check if a specific customer ID is provided (for manual triggers)
   const requestedCustomerId = req.body?.customerId;
+  const maxCategories = req.body?.maxCategories || 1; // Process only 1 category by default to avoid timeout
 
   try {
     // Get all active Bol.com customers (or specific one if requested)
@@ -76,7 +77,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     for (const customer of customers) {
       try {
-        const result = await processCustomer(customer, supabase);
+        const result = await processCustomer(customer, supabase, maxCategories);
         results.push({
           customerId: customer.id,
           status: 'ok',
@@ -109,7 +110,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-async function processCustomer(customer: any, supabase: any) {
+async function processCustomer(customer: any, supabase: any, maxCategories: number = 1) {
   const token = await getBolToken(customer.bol_client_id, customer.bol_client_secret);
   const detail: Record<string, any> = {};
   const stats = {
@@ -117,6 +118,8 @@ async function processCustomer(customer: any, supabase: any) {
     competitors_found: 0,
     keywords_analyzed: 0,
   };
+
+  console.log(`[processCustomer] Max categories to process: ${maxCategories}`);
 
   // ── STAP 1: Categorie detecteren per eigen EAN via placement API ─────────
   console.log(`[processCustomer] STAP 1: Categorie detecteren via placement API`);
@@ -230,10 +233,17 @@ async function processCustomer(customer: any, supabase: any) {
   detail.uniqueCategories = `${uniqueCategories.size} categories`;
   console.log(`[processCustomer] Unieke categorieën: ${uniqueCategories.size}`);
 
-  // ── STAP 3: Process each category ─────────────────────────────────────────
+  // ── STAP 3: Process each category (limited by maxCategories to avoid timeout) ─
   const categoryResults: string[] = [];
+  let processedCount = 0;
 
   for (const [catId, catInfo] of uniqueCategories.entries()) {
+    if (processedCount >= maxCategories) {
+      console.log(`[processCustomer] Reached maxCategories limit (${maxCategories}), stopping`);
+      categoryResults.push(`... and ${uniqueCategories.size - processedCount} more categories (run again to process)`);
+      break;
+    }
+
     try {
       const catResult = await processCategory(
         customer.id,
@@ -246,9 +256,11 @@ async function processCustomer(customer: any, supabase: any) {
       stats.competitors_found += catResult.competitors_found || 0;
       stats.keywords_analyzed += catResult.keywords_analyzed || 0;
       categoryResults.push(`${catInfo.categorySlug}: ${catResult.message}`);
+      processedCount++;
     } catch (err) {
       console.error(`Error processing category ${catInfo.categorySlug}:`, err);
       categoryResults.push(`${catInfo.categorySlug}: error - ${(err as Error).message}`);
+      processedCount++;
     }
 
     // Rate limit between categories
