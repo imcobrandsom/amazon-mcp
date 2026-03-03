@@ -514,7 +514,7 @@ async function processCategory(
   // Get ALL catalog data for this category (not just newly inserted)
   const { data: allCatalogData } = await supabase
     .from('bol_competitor_catalog')
-    .select('competitor_ean, title, brand, list_price')
+    .select('competitor_ean, title, brand, list_price, is_customer_product')
     .eq('bol_customer_id', customerId)
     .eq('category_slug', category.categorySlug);
 
@@ -526,6 +526,7 @@ async function processCategory(
     title: c.title,
     brand: c.brand,
     list_price: c.list_price,
+    is_customer_product: c.is_customer_product ?? false,
   }));
 
   console.log(`[processCategory] Generating insights for ${allCatalogInserts.length} total competitors in category`);
