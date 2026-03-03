@@ -2195,6 +2195,49 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
 
   const runPhase = async (phase: BolSyncType): Promise<PhaseStatus> => {
     setPhase(phase, { status: 'running', message: '' });
+
+    // Special handling for competitor phase - run in loop until all categories processed
+    if (phase === 'competitor') {
+      let iteration = 0;
+      const maxIterations = 50; // Safety limit
+
+      while (iteration < maxIterations) {
+        iteration++;
+
+        try {
+          const result = await triggerSync(bolCustomerId, phase);
+          const resultStr = JSON.stringify(result);
+
+          // Update UI with progress
+          const catCount = result.categories_analyzed ?? 0;
+          const prodCount = result.competitors_found ?? 0;
+          const msg = iteration > 1
+            ? `Iteration ${iteration}: ${catCount} cat · ${prodCount} comp`
+            : `${catCount} cat · ${prodCount} comp`;
+
+          setPhase(phase, { status: 'running', message: msg });
+
+          // Check if more categories remain
+          if (!resultStr.includes('more categories')) {
+            // All done!
+            setPhase(phase, { status: 'success', message: `Done (${iteration} iterations)` });
+            return 'success';
+          }
+
+          // Wait a bit before next iteration
+          await new Promise(r => setTimeout(r, 1000));
+        } catch (e) {
+          const msg = (e as Error).message;
+          setPhase(phase, { status: 'error', message: `Iteration ${iteration}: ${msg}` });
+          return 'error';
+        }
+      }
+
+      setPhase(phase, { status: 'error', message: 'Max iterations reached' });
+      return 'error';
+    }
+
+    // Regular phase handling
     try {
       const result = await triggerSync(bolCustomerId, phase);
       let finalStatus: PhaseStatus = 'success';
@@ -2246,16 +2289,24 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
         message = [d.competitors, d.rankings, d.catalog].filter(Boolean).join(' · ') || 'Done';
         if (result.message) { finalStatus = 'pending'; message = result.message; }
       } else if (phase === 'competitor') {
-        // competitor analysis
+        // competitor analysis - may need multiple iterations due to timeout limits
         const catCount = result.categories_analyzed ?? 0;
         const prodCount = result.competitors_found ?? 0;
         const kwCount = result.keywords_analyzed ?? 0;
         const parts: string[] = [];
-        if (catCount > 0) parts.push(`${catCount} categories`);
-        if (prodCount > 0) parts.push(`${prodCount} competitors`);
-        if (kwCount > 0) parts.push(`${kwCount} keywords`);
-        message = parts.join(' · ') || 'Done';
+        if (catCount > 0) parts.push(`${catCount} cat`);
+        if (prodCount > 0) parts.push(`${prodCount} comp`);
+        if (kwCount > 0) parts.push(`${kwCount} kw`);
+        message = parts.join(' · ') || 'Processing...';
         if (result.error) { finalStatus = 'error'; message = result.error; }
+
+        // Check if there are more categories to process
+        const resultStr = JSON.stringify(result);
+        if (resultStr.includes('more categories')) {
+          // There are more categories - run again
+          finalStatus = 'pending';
+          message += ' · more...';
+        }
       }
 
       setPhase(phase, { status: finalStatus, message });
