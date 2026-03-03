@@ -114,16 +114,22 @@ async function processCustomer(customer: any, supabase: any) {
   console.log(`[processCustomer] Found ${eans.length} EANs from competitor snapshots`);
 
   // Check if we need to refresh product categories
-  const { count: existingCategoriesCount } = await supabase
+  const { data: existingCategories } = await supabase
     .from('bol_product_categories')
-    .select('id', { count: 'exact', head: true })
+    .select('category_slug')
     .eq('bol_customer_id', customer.id);
+
+  const existingCategoriesCount = existingCategories?.length || 0;
+  const uncategorizedCount = existingCategories?.filter((c: any) => c.category_slug === 'uncategorized').length || 0;
 
   let categoryInserts = [];
   let catalogFetched = 0;
 
-  // Refresh categories if count doesn't match or if they're all uncategorized
-  const needsRefresh = existingCategoriesCount === 0 || existingCategoriesCount !== eans.length;
+  // Refresh if: no categories, count mismatch, or most are uncategorized
+  const needsRefresh =
+    existingCategoriesCount === 0 ||
+    existingCategoriesCount !== eans.length ||
+    uncategorizedCount > existingCategoriesCount * 0.5; // More than 50% uncategorized
 
   if (needsRefresh) {
     console.log(`[processCustomer] Refreshing product categories (found ${existingCategoriesCount}, need ${eans.length})`);
