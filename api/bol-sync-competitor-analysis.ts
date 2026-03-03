@@ -359,7 +359,6 @@ async function processCategory(
     category_slug: category.categorySlug,
     category_id: category.categoryId,
     title,
-    title_raw: title,
     is_customer_product: false,
     fetched_at: new Date().toISOString(),
   }));
