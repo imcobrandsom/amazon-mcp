@@ -251,13 +251,18 @@ export default function BolCompetitorResearch() {
               </h3>
               <div className="flex flex-wrap gap-2">
                 {currentInsights.trending_keywords.slice(0, 20).map((kw, i) => (
-                  <span
+                  <div
                     key={i}
-                    className="px-3 py-1 bg-gray-700 text-white text-sm rounded-full hover:bg-gray-600 transition-colors"
+                    className="flex items-center gap-2 px-3 py-1 bg-gray-700 text-white text-sm rounded-full hover:bg-gray-600 transition-colors"
                   >
-                    {kw.keyword}{' '}
-                    <span className="text-gray-400 font-mono">({kw.frequency})</span>
-                  </span>
+                    <span>{kw.keyword}</span>
+                    <span className="text-gray-400 font-mono">({kw.frequency}×)</span>
+                    {kw.search_volume != null && (
+                      <span className="bg-blue-600 text-white rounded px-1.5 py-0.5 text-xs font-medium">
+                        {kw.search_volume.toLocaleString('nl-NL')}/mnd
+                      </span>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>
@@ -376,34 +381,34 @@ export default function BolCompetitorResearch() {
                     )}
                   </td>
                   <td className="p-2 text-center">
-                    {comp.analysis?.title_score != null ? (
+                    {(comp.analysis?.title_score ?? null) != null ? (
                       <span
                         className={
-                          comp.analysis.title_score >= 70
+                          (comp.analysis?.title_score ?? 0) >= 70
                             ? 'text-green-400 font-semibold'
-                            : comp.analysis.title_score >= 50
+                            : (comp.analysis?.title_score ?? 0) >= 50
                             ? 'text-yellow-400 font-semibold'
                             : 'text-red-400 font-semibold'
                         }
                       >
-                        {comp.analysis.title_score}
+                        {comp.analysis?.title_score ?? 0}
                       </span>
                     ) : (
                       <span className="text-gray-500">-</span>
                     )}
                   </td>
                   <td className="p-2 text-center">
-                    {comp.analysis?.description_score != null ? (
+                    {(comp.analysis?.description_score ?? null) != null ? (
                       <span
                         className={
-                          comp.analysis.description_score >= 70
+                          (comp.analysis?.description_score ?? 0) >= 70
                             ? 'text-green-400 font-semibold'
-                            : comp.analysis.description_score >= 50
+                            : (comp.analysis?.description_score ?? 0) >= 50
                             ? 'text-yellow-400 font-semibold'
                             : 'text-red-400 font-semibold'
                         }
                       >
-                        {comp.analysis.description_score}
+                        {comp.analysis?.description_score ?? 0}
                       </span>
                     ) : (
                       <span className="text-gray-500">-</span>
@@ -411,7 +416,7 @@ export default function BolCompetitorResearch() {
                   </td>
                   <td className="p-2 text-xs text-gray-400">
                     <div className="max-w-xs truncate">
-                      {comp.analysis?.extracted_keywords?.slice(0, 4).join(', ') || (
+                      {(comp.analysis?.extracted_keywords ?? []).slice(0, 4).join(', ') || (
                         <span className="italic">No keywords</span>
                       )}
                     </div>

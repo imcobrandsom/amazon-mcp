@@ -332,19 +332,44 @@ export async function getProductRatings(
 
 // ── Keyword / ranking data ────────────────────────────────────────────────────
 
-/** Fetch product search/browse rank history for a given EAN */
+export interface BolProductRank {
+  categoryId: string;
+  searchTerm: string | null;
+  wasSponsored: boolean;
+  rank: number;
+  impressions: number;
+}
+
+/**
+ * Haal categorie-ranks op voor een EAN (type=BROWSE voor categoriepositie).
+ * GET /retailer/insights/product-ranks
+ * Geeft officiële categoryId's terug waar dit product in staat.
+ */
 export async function getProductRanks(
   token: string,
   ean: string,
-  searchType: 'SEARCH' | 'BROWSE'
-): Promise<Array<{ rank: number; impressions: number; weekStartDate: string }>> {
-  const res = await bolFetch(
-    token,
-    `/retailer/insights/product-ranks?ean=${encodeURIComponent(ean)}&search-type=${searchType}&number-of-weeks=4`
+  date: string,          // ISO date string: 'YYYY-MM-DD'
+  type: 'SEARCH' | 'BROWSE' = 'BROWSE',
+  page = 1
+): Promise<{ ranks: BolProductRank[]; hasNextPage: boolean }> {
+  const params = new URLSearchParams({
+    ean,
+    date,
+    type,
+    page: String(page),
+  });
+  const res = await fetch(
+    `https://api.bol.com/retailer/insights/product-ranks?${params}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.retailer.v10+json',
+      },
+    }
   );
-  if (!res.ok) return [];
-  const d = res.data as { productRanks?: Array<{ rank: number; impressions: number; weekStartDate: string }> };
-  return d.productRanks ?? [];
+  if (!res.ok) throw new Error(`getProductRanks: ${res.status} for EAN ${ean}`);
+  const data = await res.json() as { ranks?: BolProductRank[]; hasNextPage?: boolean };
+  return { ranks: data.ranks ?? [], hasNextPage: data.hasNextPage ?? false };
 }
 
 // ── Catalog / content ─────────────────────────────────────────────────────────
@@ -575,4 +600,127 @@ export async function getAdsKeywordPerformance(
   }
 
   return all;
+}
+
+// ── Categorieboom ────────────────────────────────────────────────────────────
+
+export interface BolCategoryNode {
+  categoryId: string;
+  categoryName: string;
+  order?: number;
+  subcategories?: BolCategoryNode[];
+}
+
+/**
+ * Haalt de volledige Bol.com categorieboom op.
+ * GET /retailer/products/categories
+ * Resultaat: geneste boom met categoryId + categoryName + subcategories[]
+ */
+export async function getProductCategories(token: string): Promise<BolCategoryNode[]> {
+  const res = await fetch('https://api.bol.com/retailer/products/categories', {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.retailer.v10+json',
+    },
+  });
+  if (!res.ok) throw new Error(`getProductCategories: ${res.status}`);
+  const data = await res.json() as { categories?: BolCategoryNode[] };
+  return data.categories ?? [];
+}
+
+/**
+ * Plat de categorieboom af naar een Map<categoryId, categoryName>
+ * voor snelle lookups.
+ */
+export function flattenCategoryTree(
+  nodes: BolCategoryNode[],
+  result: Map<string, string> = new Map()
+): Map<string, string> {
+  for (const node of nodes) {
+    result.set(node.categoryId, node.categoryName);
+    if (node.subcategories?.length) {
+      flattenCategoryTree(node.subcategories, result);
+    }
+  }
+  return result;
+}
+
+// ── Product list (category browse) ───────────────────────────────────────────
+
+export interface BolProductListItem {
+  title: string;
+  eans: Array<{ ean: string }>;
+}
+
+/**
+ * Haal producten op per categorie (paginated, max 50 per pagina).
+ * POST /retailer/products/list
+ * Retourneert title + EAN(s) — gebruik getCatalogProduct voor volledige content.
+ */
+export async function getProductList(
+  token: string,
+  params: {
+    categoryId: string;
+    countryCode?: 'NL' | 'BE';
+    sort?: 'POPULARITY' | 'RELEVANCE' | 'PRICE_ASC' | 'PRICE_DESC';
+    page?: number;
+  }
+): Promise<{ products: BolProductListItem[] }> {
+  const res = await fetch('https://api.bol.com/retailer/products/list', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.retailer.v10+json',
+      'Content-Type': 'application/vnd.retailer.v10+json',
+    },
+    body: JSON.stringify({
+      countryCode: params.countryCode ?? 'NL',
+      categoryId: params.categoryId,
+      sort: params.sort ?? 'POPULARITY',
+      page: params.page ?? 1,
+    }),
+  });
+  if (!res.ok) throw new Error(`getProductList: ${res.status} for category ${params.categoryId}`);
+  const data = await res.json() as { products?: BolProductListItem[] };
+  return { products: data.products ?? [] };
+}
+
+// ── Search term volume ────────────────────────────────────────────────────────
+
+export interface BolSearchTermData {
+  searchTerm: string;
+  total: number;
+  countries: Array<{ countryCode: string; count: number }>;
+  relatedSearchTerms?: Array<{ searchTerm: string; volume: number }>;
+}
+
+/**
+ * Haal zoekvolume op voor een keyword.
+ * GET /retailer/insights/search-terms
+ */
+export async function getSearchTermVolume(
+  token: string,
+  searchTerm: string,
+  period: 'DAY' | 'WEEK' | 'MONTH' = 'MONTH',
+  numberOfPeriods = 3
+): Promise<BolSearchTermData | null> {
+  const params = new URLSearchParams({
+    'search-term': searchTerm,
+    period,
+    'number-of-periods': String(numberOfPeriods),
+    'related-search-terms': 'false',
+  });
+  const res = await fetch(
+    `https://api.bol.com/retailer/insights/search-terms?${params}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.retailer.v10+json',
+      },
+    }
+  );
+  if (res.status === 404 || res.status === 204) return null;
+  if (!res.ok) throw new Error(`getSearchTermVolume: ${res.status} for term "${searchTerm}"`);
+  const data = await res.json() as { searchTerms?: BolSearchTermData };
+  return data.searchTerms ?? null;
 }

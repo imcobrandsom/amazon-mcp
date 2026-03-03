@@ -12,6 +12,7 @@ interface CompetitorProduct {
   description: string | null;
   brand: string | null;
   list_price: number | null;
+  attributes?: Array<{ id: string; values: Array<{ value: string; unitId?: string }> }>;
 }
 
 interface CompetitorAnalysisResult {
@@ -60,13 +61,21 @@ async function analyzeBatch(
 
 For each product below, score the content quality and extract insights:
 
-${products.map((p, i) => `
+${products.map((p, i) => {
+  const attributesText = (p.attributes ?? [])
+    .slice(0, 10)  // max 10 attrs per product om tokens te beperken
+    .map(a => `${a.id}: ${a.values.map(v => v.value + (v.unitId ? ` ${v.unitId}` : '')).join(', ')}`)
+    .join(' | ');
+
+  return `
 ## Product ${i + 1} (EAN: ${p.competitor_ean})
 **Title:** ${p.title || '(missing)'}
-**Description:** ${p.description || '(missing)'}
+**Description:** ${(p.description || '').slice(0, 300) || '(missing)'}
 **Brand:** ${p.brand || '(missing)'}
 **Price:** €${p.list_price?.toFixed(2) || 'N/A'}
-`).join('\n')}
+**Attributes:** ${attributesText || 'none'}
+`;
+}).join('\n')}
 
 For each product, provide:
 
@@ -105,7 +114,7 @@ Return **ONLY** a JSON array (no markdown, no explanation):
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
+      model: process.env.CLAUDE_MODEL ?? 'claude-sonnet-4-5',
       max_tokens: 8192,
       temperature: 0.3, // Lower temperature for more consistent JSON
       messages: [{ role: 'user', content: prompt }],
@@ -230,7 +239,12 @@ export async function generateCategoryInsights(
   const trendingKeywords = Array.from(keywordFreq.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 30)
-    .map(([keyword, frequency]) => ({ keyword, frequency, trend: 'stable' }));
+    .map(([keyword, frequency]) => ({
+      keyword,
+      frequency,
+      search_volume: null,   // wordt gevuld door search-terms API stap
+      trend: 'stable' as const,
+    }));
 
   // Trending USPs
   const uspFreq = new Map<string, number>();

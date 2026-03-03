@@ -169,11 +169,19 @@ export interface BolKeywordRanking {
 
 // ── Competitor Research Types ────────────────────────────────────────
 
+export interface BolTrendingKeyword {
+  keyword: string;
+  frequency: number;
+  search_volume: number | null;
+  trend: 'up' | 'down' | 'stable';
+}
+
 export interface BolProductCategory {
   id: string;
   bol_customer_id: string;
   ean: string;
-  category_id: string | null;
+  category_id: string | null;    // officieel Bol.com categoryId
+  category_name: string | null;  // leesbare naam (bijv. "Sportlegging")
   category_path: string | null;
   category_slug: string;
   brand: string | null;
@@ -230,11 +238,7 @@ export interface BolCategoryInsights {
     title: string | null;
     price: number | null;
   }> | null;
-  trending_keywords: Array<{
-    keyword: string;
-    frequency: number;
-    trend: string;
-  }> | null;
+  trending_keywords: BolTrendingKeyword[] | null;
   trending_usps: Array<{
     usp: string;
     frequency: number;
