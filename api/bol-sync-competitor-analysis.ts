@@ -385,7 +385,10 @@ async function processCategory(
     .select('competitor_ean, category_slug')
     .eq('bol_customer_id', customerId)
     .eq('category_slug', category.categorySlug)
-    .or(`description.is.null,fetched_at.lt.${sevenDaysAgo.toISOString()}`);
+    .or(`description.is.null,fetched_at.lt.${sevenDaysAgo.toISOString()}`)
+    .limit(50); // Limit to 50 to avoid timeout (50 × 200ms = 10s)
+
+  console.log(`[processCategory] Content enrichment: processing ${staleCompetitors?.length ?? 0} products (max 50 per run)`);
 
   let enriched = 0;
   for (const comp of staleCompetitors ?? []) {
@@ -427,13 +430,13 @@ async function processCategory(
   // ── STAP 6: AI analyse ────────────────────────────────────────────────────
   console.log(`[processCategory] STAP 6: AI analyse`);
 
-  // Haal volledige catalog data op voor analyse
+  // Haal volledige catalog data op voor analyse (limit to 50 to speed up)
   const { data: catalogProducts } = await supabase
     .from('bol_competitor_catalog')
     .select('competitor_ean, title, description, brand, list_price, attributes')
     .eq('bol_customer_id', customerId)
     .eq('category_slug', category.categorySlug)
-    .limit(100);
+    .limit(50); // Reduced from 100 to 50 for faster processing
 
   const productsToAnalyze = (catalogProducts ?? []).map((c: any) => ({
     competitor_ean: c.competitor_ean,
@@ -498,8 +501,8 @@ async function processCategory(
     supabase
   );
 
-  // ── STAP 7: Keyword volume validatie ──────────────────────────────────────
-  console.log(`[processCategory] STAP 7: Keyword volume validatie`);
+  // ── STAP 7: Keyword volume validatie (SKIPPED for performance) ────────────
+  console.log(`[processCategory] STAP 7: Keyword volume validatie (skipped for performance)`);
 
   // Haal de laatst gegenereerde insights op
   const { data: insight } = await supabase
@@ -511,36 +514,38 @@ async function processCategory(
     .limit(1)
     .single();
 
-  if (insight?.trending_keywords) {
-    const keywords = (insight.trending_keywords as Array<{
-      keyword: string; frequency: number; search_volume?: number | null; trend: string;
-    }>).slice(0, 20);
-
-    const enrichedKeywords = [];
-    for (const kw of keywords) {
-      try {
-        const volumeData = await getSearchTermVolume(token, kw.keyword);
-        enrichedKeywords.push({
-          ...kw,
-          search_volume: volumeData?.total ?? null,
-        });
-        await sleep(200);
-      } catch {
-        enrichedKeywords.push(kw);
-      }
-    }
-
-    // Update category insights met zoekvolumes
-    await supabase
-      .from('bol_category_insights')
-      .update({ trending_keywords: enrichedKeywords })
-      .eq('bol_customer_id', customerId)
-      .eq('category_slug', category.categorySlug)
-      .order('generated_at', { ascending: false })
-      .limit(1);
-
-    console.log(`[processCategory] Keyword volumes toegevoegd voor ${enrichedKeywords.length} keywords`);
-  }
+  // SKIP keyword volume validation for now (too slow - 20 keywords × 200ms = 4s per category)
+  // if (insight?.trending_keywords) {
+  //   const keywords = (insight.trending_keywords as Array<{
+  //     keyword: string; frequency: number; search_volume?: number | null; trend: string;
+  //   }>).slice(0, 20);
+  //
+  //   const enrichedKeywords = [];
+  //   for (const kw of keywords) {
+  //     try {
+  //       const volumeData = await getSearchTermVolume(token, kw.keyword);
+  //       enrichedKeywords.push({
+  //         ...kw,
+  //         search_volume: volumeData?.total ?? null,
+  //       });
+  //       await sleep(200);
+  //     } catch {
+  //       enrichedKeywords.push(kw);
+  //     }
+  //   }
+  //
+  //   // Update category insights met zoekvolumes
+  //   await supabase
+  //     .from('bol_category_insights')
+  //     .update({ trending_keywords: enrichedKeywords })
+  //     .eq('bol_customer_id', customerId)
+  //     .eq('category_slug', category.categorySlug)
+  //     .order('generated_at', { ascending: false })
+  //     .limit(1);
+  //
+  //   console.log(`[processCategory] Keyword volumes toegevoegd voor ${enrichedKeywords.length} keywords`);
+  // }
+  console.log(`[processCategory] Keyword volume validation skipped (performance optimization)`);
 
   const keywordCount = insight?.trending_keywords ? (insight.trending_keywords as any[]).length : 0;
 
