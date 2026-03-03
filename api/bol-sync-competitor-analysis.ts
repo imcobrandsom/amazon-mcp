@@ -237,10 +237,31 @@ async function processCustomer(customer: any, supabase: any, maxCategories: numb
   const categoryResults: string[] = [];
   let processedCount = 0;
 
+  // Check which categories already have recent data (fetched in last hour)
+  const oneHourAgo = new Date();
+  oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+
+  const { data: recentCategories } = await supabase
+    .from('bol_competitor_catalog')
+    .select('category_slug')
+    .eq('bol_customer_id', customer.id)
+    .gte('fetched_at', oneHourAgo.toISOString());
+
+  const recentlySynced = new Set((recentCategories || []).map((c: any) => c.category_slug));
+
+  console.log(`[processCustomer] ${recentlySynced.size} categories already synced in last hour, will skip these`);
+
   for (const [catId, catInfo] of uniqueCategories.entries()) {
+    // Skip categories that were recently synced
+    if (recentlySynced.has(catInfo.categorySlug)) {
+      console.log(`[processCustomer] Skipping ${catInfo.categorySlug} (recently synced)`);
+      continue;
+    }
+
     if (processedCount >= maxCategories) {
       console.log(`[processCustomer] Reached maxCategories limit (${maxCategories}), stopping`);
-      categoryResults.push(`... and ${uniqueCategories.size - processedCount} more categories (run again to process)`);
+      const remaining = uniqueCategories.size - recentlySynced.size - processedCount;
+      categoryResults.push(`... and ${remaining} more categories (run again to process)`);
       break;
     }
 
