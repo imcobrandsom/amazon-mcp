@@ -381,6 +381,73 @@ export async function getCatalogProduct(token: string, ean: string): Promise<unk
   return res.data;
 }
 
+/**
+ * Get product placement info including catalog category hierarchy
+ * Returns the full category path from root to leaf for where this product is placed
+ */
+export interface BolPlacementCategory {
+  categoryId?: string;
+  id?: string;
+  categoryName?: string;
+  name?: string;
+  subcategories?: BolPlacementCategory[];
+}
+
+export interface BolProductPlacement {
+  url?: string;
+  categories?: BolPlacementCategory[];
+}
+
+export async function getProductPlacement(token: string, ean: string): Promise<BolProductPlacement | null> {
+  const res = await bolFetch(token, `/retailer/products/${encodeURIComponent(ean)}/placement`);
+  if (!res.ok) return null;
+  return res.data as BolProductPlacement;
+}
+
+/**
+ * Extract the deepest (most specific) category ID from a placement response
+ */
+export function extractDeepestCategoryId(placement: BolProductPlacement | null): string | null {
+  if (!placement?.categories || placement.categories.length === 0) return null;
+
+  let deepest: string | null = null;
+
+  function traverse(cats: BolPlacementCategory[]) {
+    for (const cat of cats) {
+      const id = cat.categoryId || cat.id;
+      if (id) deepest = id;
+      if (cat.subcategories?.length) {
+        traverse(cat.subcategories);
+      }
+    }
+  }
+
+  traverse(placement.categories);
+  return deepest;
+}
+
+/**
+ * Extract the full category name path (e.g. "Sport > Outlet > Sportkleding > Sportshirts & Tops")
+ */
+export function extractCategoryPath(placement: BolProductPlacement | null): string | null {
+  if (!placement?.categories || placement.categories.length === 0) return null;
+
+  const names: string[] = [];
+
+  function traverse(cats: BolPlacementCategory[]) {
+    for (const cat of cats) {
+      const name = cat.categoryName || cat.name;
+      if (name) names.push(name);
+      if (cat.subcategories?.length) {
+        traverse(cat.subcategories);
+      }
+    }
+  }
+
+  traverse(placement.categories);
+  return names.length > 0 ? names.join(' > ') : null;
+}
+
 /** Fetch sales forecast for an offer (predicted weekly sales volume) */
 export async function getSalesForecast(
   token: string,

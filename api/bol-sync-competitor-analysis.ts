@@ -1,31 +1,28 @@
 /**
- * Bol.com Competitor Research Sync — VOLLEDIG HERSCHREVEN
+ * Bol.com Competitor Research Sync
  *
- * Nieuwe 8-stappen data flow:
- * 1. Categorieboom ophalen (platte Map voor lookups)
- * 2. Categorie detecteren via product-ranks API (officële categoryId's)
- * 3. Competitor discovery via /products/list per categorie
- * 4. Content enrichment via /catalog-products (attributes + beschrijving)
- * 5. Offers ophalen voor live prijzen (bestaand)
- * 6. AI analyse (title + attributes + beschrijving)
- * 7. Keyword volume validatie via /search-terms
- * 8. Category insights genereren (bestaand + verbeterd)
+ * Data flow:
+ * 1. Categorie detecteren via /products/{ean}/placement (catalog category IDs)
+ * 2. Competitor discovery via /products/list per categorie
+ * 3. Content enrichment via /catalog-products (attributes + beschrijving)
+ * 4. Offers ophalen voor live prijzen
+ * 5. AI analyse (title + attributes + beschrijving)
+ * 6. Keyword volume validatie via /search-terms
+ * 7. Category insights genereren
  *
  * Schedule: 30 minutes after bol-sync-extended (every 6 hours)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createAdminClient } from './_lib/supabase-admin.js';
-import {
+import * as client from './_lib/bol-api-client.js';
+const {
   getBolToken,
-  getProductCategories,
-  flattenCategoryTree,
-  getProductRanks,
   getProductList,
   getCatalogProduct,
   getSearchTermVolume,
   sleep,
-} from './_lib/bol-api-client.js';
+} = client;
 import {
   analyzeCompetitorContent,
   generateCategoryInsights,
@@ -119,26 +116,8 @@ async function processCustomer(customer: any, supabase: any) {
     keywords_analyzed: 0,
   };
 
-  // ── STAP 1: Categorieboom ophalen ─────────────────────────────────────────
-  console.log(`[processCustomer] STAP 1: Categorieboom ophalen`);
-  let categoryMap: Map<string, string>;
-  try {
-    const categoryTree = await getProductCategories(token);
-    categoryMap = flattenCategoryTree(categoryTree);
-    detail.categoryTreeSize = `${categoryMap.size} categories`;
-    console.log(`[processCustomer] Categorieboom geladen: ${categoryMap.size} categorieën`);
-  } catch (err) {
-    const errMsg = (err as Error).message;
-    console.error(`[processCustomer] STAP 1 gefaald:`, errMsg);
-    // If rate limited or API error, we can still continue without category tree
-    // Category names will come from product-ranks API instead
-    categoryMap = new Map();
-    detail.categoryTreeSize = `0 categories (API error: ${errMsg})`;
-    detail.categoryTreeError = errMsg;
-  }
-
-  // ── STAP 2: Categorie detecteren per eigen EAN ────────────────────────────
-  console.log(`[processCustomer] STAP 2: Categorie detecteren`);
+  // ── STAP 1: Categorie detecteren per eigen EAN via placement API ─────────
+  console.log(`[processCustomer] STAP 1: Categorie detecteren via placement API`);
 
   // Haal top-50 EANs uit competitor snapshots (meest betrouwbare bron)
   const { data: competitorSnapshots } = await supabase
@@ -166,21 +145,23 @@ async function processCustomer(customer: any, supabase: any) {
 
   for (const ean of eans) {
     try {
-      const { ranks } = await getProductRanks(token, ean, dateStr, 'BROWSE');
-      if (ranks.length === 0) {
-        console.log(`[processCustomer] Geen ranks gevonden voor EAN ${ean}`);
+      // Use placement API to get catalog category (compatible with /products/list)
+      const placement = await client.getProductPlacement(token, ean);
+      if (!placement) {
+        console.log(`[processCustomer] Geen placement gevonden voor EAN ${ean}`);
         continue;
       }
 
-      // Neem de categorie met de hoogste impressions als primaire categorie
-      const topRank = ranks.reduce((best, r) =>
-        r.impressions > best.impressions ? r : best, ranks[0]
-      );
+      const categoryId = client.extractDeepestCategoryId(placement);
+      if (!categoryId) {
+        console.log(`[processCustomer] Geen categoryId in placement voor EAN ${ean}`);
+        continue;
+      }
 
-      const categoryId = topRank.categoryId;
-      const categoryName = categoryMap.get(categoryId) ?? null;
+      const categoryPath = client.extractCategoryPath(placement);
+      const categoryName = categoryPath?.split(' > ').pop() ?? null;
 
-      // Genereer slug: gebruik categoryId als fallback als naam onbekend is
+      // Genereer slug van category naam
       const categorySlug = categoryName
         ? categoryName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
         : `cat-${categoryId}`.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
@@ -191,14 +172,14 @@ async function processCustomer(customer: any, supabase: any) {
         category_id: categoryId,
         category_name: categoryName,
         category_slug: categorySlug,
-        category_path: categoryName || categoryId, // Voor backward compatibility
+        category_path: categoryPath || categoryId,
         fetched_at: new Date().toISOString(),
       });
 
       categoriesDetected++;
       await sleep(200); // rate limiting
     } catch (err) {
-      console.warn(`[processCustomer] Product ranks mislukt voor EAN ${ean}:`, err);
+      console.warn(`[processCustomer] Product placement mislukt voor EAN ${ean}:`, err);
     }
   }
 
@@ -213,7 +194,7 @@ async function processCustomer(customer: any, supabase: any) {
   detail.categoriesDetected = `${categoriesDetected}/${eans.length} products`;
   console.log(`[processCustomer] Categorieën gedetecteerd: ${categoriesDetected}/${eans.length}`);
 
-  // ── STAP 3: Haal unieke categorieën op ────────────────────────────────────
+  // ── STAP 2: Haal unieke categorieën op ────────────────────────────────────
   const { data: categories } = await supabase
     .from('bol_product_categories')
     .select('category_id, category_name, category_slug, category_path')
@@ -247,7 +228,7 @@ async function processCustomer(customer: any, supabase: any) {
   detail.uniqueCategories = `${uniqueCategories.size} categories`;
   console.log(`[processCustomer] Unieke categorieën: ${uniqueCategories.size}`);
 
-  // ── STAP 4: Process each category ─────────────────────────────────────────
+  // ── STAP 3: Process each category ─────────────────────────────────────────
   const categoryResults: string[] = [];
 
   for (const [catId, catInfo] of uniqueCategories.entries()) {
