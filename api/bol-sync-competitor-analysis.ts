@@ -55,7 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Check if a specific customer ID is provided (for manual triggers)
   const requestedCustomerId = req.body?.customerId;
-  const maxCategories = req.body?.maxCategories || 1; // Process only 1 category by default to avoid timeout
+  const maxCategories = req.body?.maxCategories || 10; // Process 10 categories by default for faster progress
 
   try {
     // Get all active Bol.com customers (or specific one if requested)
@@ -110,7 +110,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-async function processCustomer(customer: any, supabase: any, maxCategories: number = 1) {
+async function processCustomer(customer: any, supabase: any, maxCategories: number = 10) {
   const token = await getBolToken(customer.bol_client_id, customer.bol_client_secret);
   const detail: Record<string, any> = {};
   const stats = {
@@ -271,22 +271,29 @@ async function processCustomer(customer: any, supabase: any, maxCategories: numb
     analysisByCategory.get(a.category_slug)!.add(a.competitor_ean);
   });
 
-  // A category is fully analyzed if all catalog EANs have been analyzed
-  for (const [catSlug, catalogEans] of catalogByCategory.entries()) {
-    const analyzedEans = analysisByCategory.get(catSlug) || new Set();
-    const allAnalyzed = Array.from(catalogEans).every(ean => analyzedEans.has(ean));
-    if (allAnalyzed && catalogEans.size > 0) {
+  // A category is fully analyzed if it has >= 100 analyzed products
+  for (const [catSlug, analyzedEans] of analysisByCategory.entries()) {
+    if (analyzedEans.size >= 100) {
       fullyAnalyzedCategories.add(catSlug);
     }
   }
 
   const recentlySynced = fullyAnalyzedCategories;
-  console.log(`[processCustomer] ${recentlySynced.size} categories fully analyzed, will process incomplete ones first`);
+  console.log(`[processCustomer] ${recentlySynced.size} categories fully analyzed (>=100 products), will process incomplete ones first`);
 
-  for (const [catId, catInfo] of uniqueCategories.entries()) {
+  // Sort categories by priority: first those with catalog data but unanalyzed products, then new categories
+  const sortedCategories = Array.from(uniqueCategories.values()).sort((a, b) => {
+    const aHasCatalog = (catalogByCategory.get(a.categorySlug)?.size ?? 0) > 0;
+    const bHasCatalog = (catalogByCategory.get(b.categorySlug)?.size ?? 0) > 0;
+    if (aHasCatalog && !bHasCatalog) return -1;
+    if (!aHasCatalog && bHasCatalog) return 1;
+    return 0;
+  });
+
+  for (const catInfo of sortedCategories) {
     // Skip categories that were recently synced
     if (recentlySynced.has(catInfo.categorySlug)) {
-      console.log(`[processCustomer] Skipping ${catInfo.categorySlug} (recently synced)`);
+      console.log(`[processCustomer] Skipping ${catInfo.categorySlug} (>=100 products analyzed)`);
       continue;
     }
 
@@ -303,7 +310,8 @@ async function processCustomer(customer: any, supabase: any, maxCategories: numb
         catInfo,
         token,
         supabase,
-        eans
+        eans,
+        catalogByCategory
       );
       stats.categories_analyzed++;
       stats.competitors_found += catResult.competitors_found || 0;
@@ -337,8 +345,9 @@ async function processCategory(
   },
   token: string,
   supabase: any,
-  customerEans: string[]
-): Promise<string> {
+  customerEans: string[],
+  catalogByCategory: Map<string, Set<string>>
+): Promise<{ competitors_found: number }> {
   console.log(`[processCategory] Processing ${category.categorySlug} (ID: ${category.categoryId})`);
 
   // Get customer's product EANs in this category
@@ -351,7 +360,8 @@ async function processCategory(
   const yourEans = new Set((yourProducts || []).map((p: any) => p.ean));
 
   if (yourEans.size === 0) {
-    return 'No products in category';
+    console.log(`[processCategory] ⚠️ No products in category ${category.categorySlug}, skipping`);
+    return { competitors_found: 0 };
   }
 
   console.log(`[processCategory] ${yourEans.size} eigen producten in ${category.categorySlug}`);
@@ -405,6 +415,15 @@ async function processCategory(
 
   console.log(`[processCategory] Totaal ${competitorEans.size} concurrenten gevonden`);
 
+  // Early exit if no competitors found AND no existing catalog data
+  const hasCatalogData = (catalogByCategory.get(category.categorySlug)?.size ?? 0) > 0;
+  if (competitorEans.size === 0 && !hasCatalogData) {
+    console.warn(`[processCategory] ⚠️ GEEN COMPETITORS gevonden en geen catalog-data voor ${category.categorySlug}!`);
+    console.warn(`[processCategory] Mogelijke oorzaken: alle producten zijn eigen producten, of categorie is leeg`);
+    console.log(`[processCategory] Early exit - niets te verwerken`);
+    return { competitors_found: 0 };
+  }
+
   // UPSERT in bol_competitor_catalog (title komt uit list response)
   const catalogInserts = Array.from(competitorEans.entries()).map(([ean, title]) => ({
     bol_customer_id: customerId,
@@ -427,8 +446,7 @@ async function processCategory(
       console.log(`[processCategory] ✅ Catalog upsert OK: ${catalogInserts.length} rows`);
     }
   } else {
-    console.warn(`[processCategory] ⚠️ GEEN COMPETITORS gevonden voor ${category.categorySlug}!`);
-    console.warn(`[processCategory] Mogelijke oorzaken: alle producten zijn eigen producten, of categorie is leeg`);
+    console.log(`[processCategory] No new competitors to insert (but may have existing catalog data)`);
   }
 
   // ── STAP 3D: Content enrichment via getCatalogProduct ─────────────────────
