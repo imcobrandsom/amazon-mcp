@@ -35,6 +35,7 @@ import {
   updateProductMetadata,
   getBolCampaignsForClient,
   getBolCampaignChart,
+  getBolCategoryInsights,
   triggerSync,
   listBolCustomers,
   type BolSyncType,
@@ -49,6 +50,7 @@ import type {
   BolCampaignPerformance,
   BolKeywordPerformance,
   BolCampaignChartPoint,
+  BolCategoryInsights,
 } from '../types/bol';
 import clsx from 'clsx';
 import {
@@ -1841,17 +1843,19 @@ function CampaignSection({
 
 // ── Competitor Section ─────────────────────────────────────────────────────────
 
-function CompetitorSection({ bolCustomerId }: { bolCustomerId: string }) {
-  const [competitors, setCompetitors] = useState<BolCompetitorSnapshot[] | null>(null);
+function CompetitorSection({ bolCustomerId, clientId }: { bolCustomerId: string; clientId: string }) {
+  const [competitorInsights, setCompetitorInsights] = useState<BolCategoryInsights[] | null>(null);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(0);
-  const PAGE_SIZE = 15;
 
   useEffect(() => {
     setLoading(true);
-    getBolCompetitorsForClient(bolCustomerId)
-      .then(r => setCompetitors(r.competitors))
-      .catch(() => setCompetitors([]))
+    getBolCategoryInsights(bolCustomerId)
+      .then(r => {
+        // API returns { insights: BolCategoryInsights[] } when no categorySlug
+        const insights = Array.isArray(r.insights) ? r.insights : [];
+        setCompetitorInsights(insights);
+      })
+      .catch(() => setCompetitorInsights([]))
       .finally(() => setLoading(false));
   }, [bolCustomerId]);
 
@@ -1863,122 +1867,154 @@ function CompetitorSection({ bolCustomerId }: { bolCustomerId: string }) {
     );
   }
 
-  if (!competitors?.length) return <SyncPending section="competitor" />;
+  if (!competitorInsights?.length) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
+        <div className="max-w-md mx-auto">
+          <Search size={48} className="text-slate-300 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-slate-800 mb-2">Geen competitor data beschikbaar</h3>
+          <p className="text-sm text-slate-500 mb-6">
+            Trigger eerst een 'Competitor Research' sync om categorie-niveau inzichten te genereren.
+          </p>
+          <div className="text-xs text-slate-400">
+            De competitor research analyseert alle producten in jouw categorieën, identificeert trending keywords en USPs, en vergelijkt content kwaliteit.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  const buyBoxWins = competitors.filter(c => c.buy_box_winner).length;
-  const winRate    = Math.round((buyBoxWins / competitors.length) * 100);
-  const avgComps   = Math.round(competitors.reduce((sum, c) => sum + (c.competitor_count ?? 0), 0) / competitors.length);
+  // Calculate aggregate stats from insights
+  const stats = useMemo(() => {
+    const totalCompetitors = competitorInsights.reduce((sum, cat) => sum + cat.competitor_count, 0);
 
-  // Sort: losers first, then by price gap
-  const sorted = [...competitors].sort((a, b) => {
-    if (a.buy_box_winner && !b.buy_box_winner) return 1;
-    if (!a.buy_box_winner && b.buy_box_winner) return -1;
-    const gapA = a.our_price && a.lowest_competing_price ? a.our_price - a.lowest_competing_price : 0;
-    const gapB = b.our_price && b.lowest_competing_price ? b.our_price - b.lowest_competing_price : 0;
-    return gapB - gapA;
-  });
+    // Weighted average of content quality (weighted by competitor count)
+    const totalWeightedQuality = competitorInsights.reduce(
+      (sum, cat) => sum + (cat.content_quality_avg ?? 0) * cat.competitor_count,
+      0
+    );
+    const avgContentQuality = totalCompetitors > 0
+      ? Math.round(totalWeightedQuality / totalCompetitors)
+      : 0;
 
-  const paginated = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+    // Average competitor price (simple average across categories)
+    const categoriesWithPrice = competitorInsights.filter(c => c.avg_competitor_price !== null);
+    const avgCompPrice = categoriesWithPrice.length > 0
+      ? categoriesWithPrice.reduce((sum, c) => sum + (c.avg_competitor_price ?? 0), 0) / categoriesWithPrice.length
+      : null;
+
+    return {
+      totalCompetitors,
+      avgContentQuality,
+      avgCompPrice,
+    };
+  }, [competitorInsights]);
 
   return (
     <div className="space-y-4">
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3">
         <StatTile
-          label="Buy box win rate"
-          value={`${winRate}%`}
-          sub={`${buyBoxWins} of ${competitors.length} products`}
-          color={winRate >= 70 ? 'green' : winRate >= 40 ? 'amber' : 'red'}
+          label="Gemiddelde categorie-prijs"
+          value={stats.avgCompPrice !== null ? `€${fmt(stats.avgCompPrice, 2)}` : '—'}
+          sub="Concurrent pricing"
         />
-        <StatTile label="Products tracked" value={competitors.length} />
-        <StatTile label="Avg competitors" value={avgComps} sub="per product" />
+        <StatTile
+          label="Totaal concurrenten"
+          value={stats.totalCompetitors}
+          sub="In kaart gebracht"
+        />
+        <StatTile
+          label="Content kwaliteit"
+          value={`${stats.avgContentQuality}/100`}
+          sub="Gemiddelde concurrent"
+          color={stats.avgContentQuality >= 70 ? 'green' : stats.avgContentQuality >= 50 ? 'amber' : 'red'}
+        />
       </div>
 
-      {/* Link to Full Competitor Research */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h4 className="text-sm font-semibold text-blue-900">Category-Level Competitor Analysis</h4>
-            <p className="text-xs text-blue-700 mt-1">
-              Discover all products in your categories, analyze competitor content, and identify trending keywords & USPs
-            </p>
-          </div>
-          <Link
-            to={`/clients/${bolCustomerId}/bol-competitor-research`}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
-          >
-            <Search size={14} />
-            View Full Analysis
-          </Link>
-        </div>
-      </div>
-
-      {/* Competitor table */}
+      {/* Category insights table */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-800">Competitor Overview</h3>
-            <p className="text-xs text-slate-400 mt-0.5">Losers shown first · Red = competitor lower than us</p>
-          </div>
-          {totalPages > 1 && (
-            <div className="flex items-center gap-1 text-xs text-slate-500">
-              <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
-                className="p-1 rounded hover:bg-slate-100 disabled:opacity-30">
-                <ChevronLeft size={14} />
-              </button>
-              <span>{page + 1}/{totalPages}</span>
-              <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
-                className="p-1 rounded hover:bg-slate-100 disabled:opacity-30">
-                <ChevronRight size={14} />
-              </button>
-            </div>
-          )}
+        <div className="px-4 py-3 border-b border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-800">Categorie Overzicht</h3>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Per categorie: jouw producten, concurrent analyse, en trending keywords
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100">
-                <th className="px-4 py-2 text-left font-semibold text-slate-500">EAN</th>
-                <th className="px-4 py-2 text-center font-semibold text-slate-500">Buy Box</th>
-                <th className="px-4 py-2 text-right font-semibold text-slate-500">Our Price</th>
-                <th className="px-4 py-2 text-right font-semibold text-slate-500">Lowest</th>
-                <th className="px-4 py-2 text-right font-semibold text-slate-500">Competitors</th>
-                <th className="px-4 py-2 text-right font-semibold text-slate-500">Rating</th>
+                <th className="px-4 py-2 text-left font-semibold text-slate-500">Categorie</th>
+                <th className="px-4 py-2 text-center font-semibold text-slate-500">Jouw Prod.</th>
+                <th className="px-4 py-2 text-center font-semibold text-slate-500">Concurrenten</th>
+                <th className="px-4 py-2 text-right font-semibold text-slate-500">Gem. Prijs</th>
+                <th className="px-4 py-2 text-right font-semibold text-slate-500">Prijsverschil</th>
+                <th className="px-4 py-2 text-center font-semibold text-slate-500">Content</th>
+                <th className="px-4 py-2 text-left font-semibold text-slate-500">Top Keywords</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {paginated.map((c, i) => {
-                const cheaper = c.lowest_competing_price !== null && c.our_price !== null &&
-                  c.lowest_competing_price < c.our_price;
+              {competitorInsights.map((insight, i) => {
+                const categoryName = insight.category_path.split(' > ').pop() || insight.category_slug;
+                const priceGapColor = (insight.price_gap_percent ?? 0) >= 0 ? 'text-green-600' : 'text-red-600';
+                const contentColor = (insight.content_quality_avg ?? 0) >= 70
+                  ? 'bg-green-100 text-green-700'
+                  : (insight.content_quality_avg ?? 0) >= 50
+                  ? 'bg-amber-100 text-amber-700'
+                  : 'bg-red-100 text-red-700';
+                const topKeywords = (insight.trending_keywords || []).slice(0, 3);
+
                 return (
                   <tr key={i} className="hover:bg-slate-50">
-                    <td className="px-4 py-2.5 font-mono text-slate-600">{c.ean}</td>
+                    <td className="px-4 py-2.5 text-slate-800 font-medium">{categoryName}</td>
+                    <td className="px-4 py-2.5 text-center text-slate-600">{insight.your_product_count}</td>
+                    <td className="px-4 py-2.5 text-center text-slate-600">{insight.competitor_count}</td>
+                    <td className="px-4 py-2.5 text-right text-slate-600">
+                      {insight.avg_competitor_price !== null ? `€${fmt(insight.avg_competitor_price, 2)}` : '—'}
+                    </td>
+                    <td className={clsx('px-4 py-2.5 text-right font-medium', priceGapColor)}>
+                      {insight.price_gap_percent !== null ? `${insight.price_gap_percent > 0 ? '+' : ''}${fmt(insight.price_gap_percent, 1)}%` : '—'}
+                    </td>
                     <td className="px-4 py-2.5 text-center">
-                      {c.buy_box_winner
-                        ? <CheckCircle2 size={14} className="text-green-500 inline" />
-                        : <XCircle size={14} className="text-red-400 inline" />}
+                      {insight.content_quality_avg !== null ? (
+                        <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium', contentColor)}>
+                          {Math.round(insight.content_quality_avg)}
+                        </span>
+                      ) : '—'}
                     </td>
-                    <td className="px-4 py-2.5 text-right text-slate-600">
-                      {c.our_price !== null ? `€${fmt(c.our_price, 2)}` : '—'}
-                    </td>
-                    <td className={clsx('px-4 py-2.5 text-right font-medium flex items-center justify-end gap-1',
-                      cheaper ? 'text-red-600' : 'text-slate-600'
-                    )}>
-                      {c.lowest_competing_price !== null ? `€${fmt(c.lowest_competing_price, 2)}` : '—'}
-                      {cheaper && <TrendingDown size={11} className="text-red-500" />}
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-slate-600">{c.competitor_count ?? '—'}</td>
-                    <td className="px-4 py-2.5 text-right text-slate-600">
-                      {c.rating_score !== null
-                        ? <span>{c.rating_score} <span className="text-slate-400">({c.rating_count})</span></span>
-                        : '—'}
+                    <td className="px-4 py-2.5">
+                      <div className="flex flex-wrap gap-1">
+                        {topKeywords.map((kw, ki) => (
+                          <span key={ki} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px]">
+                            {kw.keyword}
+                          </span>
+                        ))}
+                      </div>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Link to Full Competitor Research */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-semibold text-blue-900">Volledige Competitor Analyse</h4>
+            <p className="text-xs text-blue-700 mt-1">
+              Bekijk gedetailleerde product-niveau analyse, competitor content scores, en complete keyword trends per categorie
+            </p>
+          </div>
+          <Link
+            to={`/clients/${clientId}/bol-competitor-research`}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+          >
+            <Search size={14} />
+            Volledige Analyse →
+          </Link>
         </div>
       </div>
     </div>
@@ -2580,8 +2616,8 @@ export default function BolDashboard() {
               {activeSection === 'orders'          && <OrdersSection analysis={summary.orders} />}
               {activeSection === 'campaigns'       && <CampaignSection analysis={summary.advertising} bolCustomerId={bolCustomerId} />}
               {activeSection === 'returns'         && <ReturnsSection analysis={summary.returns} />}
-              {activeSection === 'competitors'     && bolCustomerId && (
-                <CompetitorSection bolCustomerId={bolCustomerId} />
+              {activeSection === 'competitors'     && bolCustomerId && clientId && (
+                <CompetitorSection bolCustomerId={bolCustomerId} clientId={clientId} />
               )}
               {activeSection === 'keywords'        && bolCustomerId && (
                 <KeywordsSection bolCustomerId={bolCustomerId} />
