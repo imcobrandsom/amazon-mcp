@@ -1867,6 +1867,34 @@ function CompetitorSection({ bolCustomerId, clientId }: { bolCustomerId: string;
       .finally(() => setLoading(false));
   }, [bolCustomerId]);
 
+  // Calculate aggregate stats from insights
+  // NOTE: useMemo must be called here (before any conditional returns) to satisfy React Rules of Hooks
+  const stats = useMemo(() => {
+    const data = competitorInsights ?? [];
+    const totalCompetitors = data.reduce((sum, cat) => sum + cat.competitor_count, 0);
+
+    // Weighted average of content quality (weighted by competitor count)
+    const totalWeightedQuality = data.reduce(
+      (sum, cat) => sum + (cat.content_quality_avg ?? 0) * cat.competitor_count,
+      0
+    );
+    const avgContentQuality = totalCompetitors > 0
+      ? Math.round(totalWeightedQuality / totalCompetitors)
+      : 0;
+
+    // Average competitor price (simple average across categories)
+    const categoriesWithPrice = data.filter(c => c.avg_competitor_price !== null);
+    const avgCompPrice = categoriesWithPrice.length > 0
+      ? categoriesWithPrice.reduce((sum, c) => sum + (c.avg_competitor_price ?? 0), 0) / categoriesWithPrice.length
+      : null;
+
+    return {
+      totalCompetitors,
+      avgContentQuality,
+      avgCompPrice,
+    };
+  }, [competitorInsights]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -1906,32 +1934,6 @@ function CompetitorSection({ bolCustomerId, clientId }: { bolCustomerId: string;
       </div>
     );
   }
-
-  // Calculate aggregate stats from insights
-  const stats = useMemo(() => {
-    const totalCompetitors = competitorInsights.reduce((sum, cat) => sum + cat.competitor_count, 0);
-
-    // Weighted average of content quality (weighted by competitor count)
-    const totalWeightedQuality = competitorInsights.reduce(
-      (sum, cat) => sum + (cat.content_quality_avg ?? 0) * cat.competitor_count,
-      0
-    );
-    const avgContentQuality = totalCompetitors > 0
-      ? Math.round(totalWeightedQuality / totalCompetitors)
-      : 0;
-
-    // Average competitor price (simple average across categories)
-    const categoriesWithPrice = competitorInsights.filter(c => c.avg_competitor_price !== null);
-    const avgCompPrice = categoriesWithPrice.length > 0
-      ? categoriesWithPrice.reduce((sum, c) => sum + (c.avg_competitor_price ?? 0), 0) / categoriesWithPrice.length
-      : null;
-
-    return {
-      totalCompetitors,
-      avgContentQuality,
-      avgCompPrice,
-    };
-  }, [competitorInsights]);
 
   return (
     <div className="space-y-4">

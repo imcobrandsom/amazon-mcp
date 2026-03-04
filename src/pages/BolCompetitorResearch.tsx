@@ -110,7 +110,9 @@ export default function BolCompetitorResearch() {
         // Get category insights
         const { insights } = await getBolCategoryInsights(bolCustomerId, selectedCategory);
         console.log('[BolCompetitorResearch] Category insights:', insights);
-        setCurrentInsights(insights as BolCategoryInsights);
+        // API may return a single object or array when categorySlug is provided
+        const insightObj = Array.isArray(insights) ? (insights[0] ?? null) : (insights ?? null);
+        setCurrentInsights(insightObj as BolCategoryInsights | null);
 
         // Get competitor data
         const { competitors: comps } = await getBolCompetitorCatalog(
