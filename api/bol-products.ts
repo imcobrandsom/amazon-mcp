@@ -33,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const supabase = createAdminClient();
 
-  const [invResult, allListResults, metadataResult] = await Promise.all([
+  const [invResult, allListResults, metadataResult, catalogResult] = await Promise.all([
     supabase
       .from('bol_raw_snapshots')
       .select('raw_data')
@@ -54,6 +54,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from('bol_product_metadata')
       .select('ean, eol')
       .eq('bol_customer_id', customerId),
+    // Fetch all catalog attributes snapshots
+    supabase
+      .from('bol_raw_snapshots')
+      .select('raw_data, catalog_attributes')
+      .eq('bol_customer_id', customerId)
+      .eq('data_type', 'catalog')
+      .order('fetched_at', { ascending: false }),
   ]);
 
   // Find the newest snapshot with 'offers' array (CSV export format)
@@ -72,6 +79,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     (metadataResult.data ?? []).map(m => [m.ean, m.eol])
   );
 
+  // Index catalog attributes by EAN for O(1) lookup
+  const catalogByEan = new Map(
+    (catalogResult.data ?? []).map(snap => {
+      const rawData = snap.raw_data as Record<string, unknown>;
+      const ean = rawData.ean as string;
+      return [ean, snap.catalog_attributes];
+    })
+  );
+
   // Deduplicate by EAN: keep first occurrence of each EAN
   const seenEans = new Set<string>();
   const deduplicatedItems = invItems.filter(item => {
@@ -83,11 +99,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const products = deduplicatedItems
     .map(item => {
       const offer = listByEan.get(item.ean);
+      const catalog = catalogByEan.get(item.ean) as Record<string, unknown> | undefined;
+
       return {
         ean:            item.ean,
         bsku:           item.bsku ?? null,
         title:          item.title ?? null,
-        description:    item.description ?? null,  // Include description
+        description:    (catalog?.Description as string) ?? null,  // From catalog attributes
         gradedStock:    item.gradedStock ?? 0,
         regularStock:   item.regularStock ?? 0,
         offerId:        offer?.offerId ?? null,
@@ -96,6 +114,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         stockAmount:    offer?.stockAmount ? parseInt(offer.stockAmount, 10) : null,
         onHold:         offer?.onHoldByRetailer === 'true',
         eol:            metadataByEan.get(item.ean) ?? false,
+        catalogAttributes: catalog ?? null,  // Include all catalog attributes
       };
     })
     .filter(p => p.regularStock > 0 || p.gradedStock > 0); // Exclude zero-stock products

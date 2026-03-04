@@ -66,7 +66,7 @@ export interface BolProduct {
   ean: string;
   bsku: string | null;
   title: string | null;
-  description: string | null;  // Product description (from inventory API)
+  description: string | null;  // Product description (from catalog API)
   gradedStock: number;
   regularStock: number;
   offerId: string | null;
@@ -75,6 +75,61 @@ export interface BolProduct {
   stockAmount: number | null;
   onHold: boolean;
   eol: boolean;  // End of Life flag (manual)
+  catalogAttributes: BolCatalogAttributes | null;  // Full catalog metadata
+}
+
+// Catalog attributes extracted from /retailer/content/catalog-products/{ean}
+export interface BolCatalogAttributes {
+  // Core fields
+  Description?: string;  // HTML formatted product description
+  Title?: string;
+  'Family Name'?: string;
+  'SEO Slug'?: string;
+
+  // Product details
+  'Colour'?: string;
+  'Colour Group'?: string;
+  'Size Clothing'?: string;
+  'Material'?: string | string[];
+  'Pattern'?: string;
+  'Gender'?: string;
+
+  // Fashion specific
+  'Fit Form'?: string;
+  'Clothing Length Indication'?: string;
+  'Fashion Seasonal Collection'?: string;
+  'Fashion Trend'?: string;
+  'Type of Fashion'?: string;
+
+  // Sports specific
+  'Type of Sport'?: string;
+  'Options for Sports Clothing'?: string;
+
+  // Physical attributes
+  'Height'?: string;
+  'Width'?: string;
+  'Length'?: string;
+  'Weight'?: string;
+
+  // Product info
+  'Manufacturer Details'?: string;
+  'Washing Instructions'?: string;
+  'Size Advice'?: string;
+  'Target Audience'?: string;
+
+  // Internal
+  'Clothing Article Number'?: string;
+  'Appearance Name'?: string;
+  'Product Group'?: string;
+
+  // Metadata
+  _published?: boolean;
+  _gpc_chunk_id?: string;
+  _enrichment_status?: number;
+  _brand?: string;
+
+  // Allow any other string key for unknown attributes
+  [key: string]: string | string[] | number | boolean | null | undefined;
 }
 
 // ── Campaign / keyword time-series ────────────────────────────────────────────
