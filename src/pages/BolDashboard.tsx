@@ -2074,12 +2074,12 @@ function KeywordsSection({ bolCustomerId }: { bolCustomerId: string }) {
 
   // Stats over alle categorieën
   const stats = useMemo(() => {
-    if (!data) return { totalKeywords: 0, totalImpressions: 0, bestKeyword: null as string | null };
+    if (!data) return { totalKeywords: 0, totalVolume: 0, bestKeyword: null as string | null };
     const allKws = data.categories.flatMap(c => c.keywords);
-    const unique = new Set(allKws.map(k => k.keyword)).size;
-    const totalImpressions = allKws.reduce((s, k) => s + k.impressions, 0);
-    const best = allKws.sort((a, b) => b.impressions - a.impressions)[0]?.keyword ?? null;
-    return { totalKeywords: unique, totalImpressions, bestKeyword: best };
+    const unique  = new Set(allKws.map(k => k.keyword)).size;
+    const totalVolume = allKws.reduce((s, k) => s + (k.search_volume ?? 0), 0);
+    const best = [...allKws].sort((a, b) => b.search_volume - a.search_volume)[0]?.keyword ?? null;
+    return { totalKeywords: unique, totalVolume, bestKeyword: best };
   }, [data]);
 
   // Keywords voor geselecteerde categorie, gefilterd + gepagineerd
@@ -2100,9 +2100,9 @@ function KeywordsSection({ bolCustomerId }: { bolCustomerId: string }) {
     const cat = data?.categories.find(c => c.category_slug === selectedCat);
     if (!cat) return;
     const lines = [
-      'keyword,impressions,trend,best_rank,best_ean',
+      'keyword,search_volume,trend,week_of',
       ...cat.keywords.map(k =>
-        `"${k.keyword}",${k.impressions},${k.impressions_trend},${k.best_rank ?? ''},${k.best_ean ?? ''}`
+        `"${k.keyword}",${k.search_volume},${k.volume_trend},${k.week_of}`
       ),
     ];
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
@@ -2134,8 +2134,8 @@ function KeywordsSection({ bolCustomerId }: { bolCustomerId: string }) {
       {/* Stat tiles */}
       <div className="grid grid-cols-3 gap-3">
         <StatTile label="Unieke keywords" value={stats.totalKeywords} sub="Alle categorieën" />
-        <StatTile label="Totaal impressions" value={fmt(stats.totalImpressions)} sub="Afgelopen 8 weken" />
-        <StatTile label="Top keyword" value={stats.bestKeyword ?? '—'} sub="Hoogste impressions" />
+        <StatTile label="Totaal zoekvolume" value={fmt(stats.totalVolume)} sub="Afgelopen 8 weken" />
+        <StatTile label="Top keyword" value={stats.bestKeyword ?? '—'} sub="Hoogste zoekvolume" />
       </div>
 
       {/* Categorie tabs + zoekbalk + export */}
@@ -2181,10 +2181,8 @@ function KeywordsSection({ bolCustomerId }: { bolCustomerId: string }) {
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100">
                 <th className="px-4 py-2 text-left font-semibold text-slate-500">Keyword</th>
-                <th className="px-4 py-2 text-right font-semibold text-slate-500">Impressions</th>
+                <th className="px-4 py-2 text-right font-semibold text-slate-500">Zoekvolume</th>
                 <th className="px-4 py-2 text-center font-semibold text-slate-500">Trend</th>
-                <th className="px-4 py-2 text-right font-semibold text-slate-500">Beste rank</th>
-                <th className="px-4 py-2 text-left font-semibold text-slate-500">EAN</th>
                 <th className="px-4 py-2 text-right font-semibold text-slate-500">Week</th>
               </tr>
             </thead>
@@ -2192,22 +2190,13 @@ function KeywordsSection({ bolCustomerId }: { bolCustomerId: string }) {
               {paged.map((kw, i) => (
                 <tr key={i} className="hover:bg-slate-50">
                   <td className="px-4 py-2.5 font-medium text-slate-800">{kw.keyword}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-600">{fmt(kw.impressions)}</td>
+                  <td className="px-4 py-2.5 text-right text-slate-600 tabular-nums">{fmt(kw.search_volume)}</td>
                   <td className="px-4 py-2.5">
                     <div className="flex justify-center">
-                      <TrendIcon trend={kw.impressions_trend} />
+                      <TrendIcon trend={kw.volume_trend} />
                     </div>
                   </td>
-                  <td className="px-4 py-2.5 text-right">
-                    {kw.best_rank !== null ? (
-                      <span className={clsx('font-bold',
-                        kw.best_rank <= 10 ? 'text-green-600' :
-                        kw.best_rank <= 30 ? 'text-amber-600' : 'text-slate-500'
-                      )}>#{kw.best_rank}</span>
-                    ) : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-slate-500 text-[10px]">{kw.best_ean ?? '—'}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-400">{kw.week_of?.slice(0, 10) ?? '—'}</td>
+                  <td className="px-4 py-2.5 text-right text-slate-400 text-[10px]">{kw.week_of}</td>
                 </tr>
               ))}
             </tbody>

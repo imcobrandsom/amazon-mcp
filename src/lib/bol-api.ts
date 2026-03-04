@@ -201,7 +201,15 @@ export async function getBolKeywordOverview(
   customerId: string,
   categorySlug?: string
 ): Promise<{
-  categories: BolKeywordCategory[];
+  categories: Array<{
+    category_slug: string;
+    keywords: Array<{
+      keyword: string;
+      search_volume: number;
+      volume_trend: 'up' | 'down' | 'stable' | 'new';
+      week_of: string;
+    }>;
+  }>;
   total_rows: number;
 }> {
   const params = new URLSearchParams({ customerId });
@@ -215,11 +223,10 @@ export async function getBolKeywordDetail(
 ): Promise<{
   keyword: string;
   history: Array<{
-    ean: string;
-    rank: number | null;
-    impressions: number;
-    week_of: string;
+    keyword: string;
     category_slug: string;
+    search_volume: number;
+    week_of: string;
   }>;
 }> {
   return apiFetch(`/bol-keywords?customerId=${customerId}&keyword=${encodeURIComponent(keyword)}`);

@@ -171,10 +171,8 @@ export interface BolKeywordRanking {
 
 export interface BolKeywordOverviewItem {
   keyword: string;
-  impressions: number;
-  impressions_trend: 'up' | 'down' | 'stable' | 'new';
-  best_rank: number | null;
-  best_ean: string | null;
+  search_volume: number;
+  volume_trend: 'up' | 'down' | 'stable' | 'new';
   week_of: string;
 }
 
@@ -190,7 +188,19 @@ export interface BolKeywordMaster {
   keyword: string;
   source: 'competitor_research' | 'advertising' | 'product_ranks';
   is_brand_term: boolean;
+  backfill_complete: boolean;
+  last_backfill_at: string | null;
   first_seen_at: string;
+}
+
+export interface BolKeywordSearchVolume {
+  id: string;
+  bol_customer_id: string;
+  category_slug: string;
+  keyword: string;
+  search_volume: number;
+  week_of: string;
+  fetched_at: string;
 }
 
 // ── Competitor Research Types ────────────────────────────────────────

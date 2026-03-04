@@ -2,18 +2,13 @@
  * POST /api/bol-sync-keywords
  * Cron: elke maandag 07:00 (zie vercel.json)
  *
- * Per customer:
- *  1. Bouw keyword master lijst op (uit competitor research + advertising)
- *  2. Filter merknamen eruit
- *  3. Backfill: voor de eerste categorie die nog niet klaar is, haal 26 weken op
- *  4. Weekly run: haal data op voor huidige week (voor alle categorieën)
+ * Run 1..N: backfill 100 keywords per run met 26 weken data
+ * Run N+1+: weekly update — vorige week ophalen voor alle backfilled keywords
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createAdminClient } from './_lib/supabase-admin.js';
 import { getBolToken, getSearchTerms, sleep } from './_lib/bol-api-client.js';
 
-// Bekende merk-namen die gefilterd moeten worden
-// Uitbreidbaar — voeg toe als je meer merken tegenkomt
 const BRAND_BLOCKLIST = new Set([
   'nike', 'adidas', 'puma', 'reebok', 'under armour', 'new balance',
   'asics', 'columbia', 'the north face', 'lululemon', 'gymshark',
@@ -29,17 +24,21 @@ function isBrandTerm(keyword: string): boolean {
   return false;
 }
 
-function getMondaysBefore(n: number): string[] {
-  const mondays: string[] = [];
+/** Geeft de meest recente maandag als Date (UTC midnight) */
+function getMostRecentMonday(): Date {
   const d = new Date();
-  const day = d.getUTCDay();
+  const day = d.getUTCDay(); // 0=zo, 1=ma, ...
   const diff = day === 0 ? 6 : day - 1;
-  d.setUTCDate(d.getUTCDate() - diff); // meest recente maandag
-  for (let i = 0; i < n; i++) {
-    mondays.push(d.toISOString().slice(0, 10));
-    d.setUTCDate(d.getUTCDate() - 7);
-  }
-  return mondays; // [nieuwste, ..., oudste]
+  d.setUTCDate(d.getUTCDate() - diff);
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/** Berekent de week_of datum voor periodeindex i (0 = huidige week, 1 = vorige, etc.) */
+function periodIndexToDateStr(mostRecentMonday: Date, index: number): string {
+  const d = new Date(mostRecentMonday);
+  d.setUTCDate(d.getUTCDate() - index * 7);
+  return d.toISOString().slice(0, 10); // 'YYYY-MM-DD'
 }
 
 function isAuthorised(req: VercelRequest): boolean {
@@ -52,12 +51,14 @@ function isAuthorised(req: VercelRequest): boolean {
       || false;
 }
 
+const MAX_KEYWORDS_PER_RUN = 100; // Pas aan op basis van Vercel timeout
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST' && req.method !== 'GET') return res.status(405).end();
   if (!isAuthorised(req)) return res.status(401).json({ error: 'Unauthorised' });
 
-  const supabase   = createAdminClient();
-  const startedAt  = Date.now();
+  const supabase  = createAdminClient();
+  const startedAt = Date.now();
   const results: Record<string, unknown>[] = [];
 
   const { data: customers } = await supabase
@@ -75,23 +76,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         customer.bol_client_secret as string
       );
 
-      // ── Stap A: Verzamel keywords uit twee bronnen ────────────────────────
+      const mostRecentMonday = getMostRecentMonday();
 
-      // Bron 1: trending_keywords uit bol_category_insights (competitor research)
+      // ── Stap A: Bouw / update keyword master list ─────────────────────────
+
+      // Bron 1: trending_keywords per categorie uit competitor research
       const { data: insights } = await supabase
         .from('bol_category_insights')
         .select('category_slug, trending_keywords')
         .eq('bol_customer_id', customerId)
         .order('generated_at', { ascending: false });
 
-      // Bron 2: advertising keywords uit bol_keyword_performance
+      // Bron 2: advertising keywords (kolom heet keyword_text)
       const { data: adKeywords } = await supabase
         .from('bol_keyword_performance')
-        .select('keyword, campaign_id')
+        .select('keyword_text, campaign_id')
         .eq('bol_customer_id', customerId);
 
-      // Koppel advertising keywords aan categorie via bol_product_categories + campaigns
-      // (Eenvoudig: voeg alle ad keywords toe aan de categorieën waar de customer producten heeft)
       const { data: productCats } = await supabase
         .from('bol_product_categories')
         .select('ean, category_slug')
@@ -101,8 +102,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // Map: category_slug → Set<keyword>
       const keywordsByCategory = new Map<string, Set<string>>();
-
-      // Initialiseer voor alle bekende categorieën
       for (const slug of allCategorySlugs) {
         keywordsByCategory.set(slug, new Set());
       }
@@ -113,97 +112,205 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const trendingKws = (insight.trending_keywords as Array<{ keyword: string }> | null) ?? [];
         if (!keywordsByCategory.has(slug)) keywordsByCategory.set(slug, new Set());
         for (const { keyword } of trendingKws) {
-          if (keyword?.trim()) keywordsByCategory.get(slug)!.add(keyword.trim().toLowerCase());
+          if (keyword?.trim() && !isBrandTerm(keyword)) {
+            keywordsByCategory.get(slug)!.add(keyword.trim().toLowerCase());
+          }
         }
       }
 
-      // Voeg advertising keywords toe aan alle categorieën (ze zijn niet aan één categorie gebonden)
-      const adKws = [...new Set((adKeywords ?? []).map(r => (r.keyword as string)?.trim().toLowerCase()).filter(Boolean))];
+      // Voeg advertising keywords toe aan alle categorieën
+      const adKws = [...new Set(
+        (adKeywords ?? [])
+          .map(r => (r.keyword_text as string | null)?.trim().toLowerCase())
+          .filter((k): k is string => !!k && !isBrandTerm(k))
+      )];
       for (const slug of allCategorySlugs) {
-        for (const kw of adKws) {
-          keywordsByCategory.get(slug)!.add(kw);
-        }
+        for (const kw of adKws) keywordsByCategory.get(slug)!.add(kw);
       }
 
-      // ── Stap B: Upsert keyword master list ───────────────────────────────
-      let keywordsUpserted = 0;
+      // Upsert keyword master list
+      let masterUpserted = 0;
       for (const [categorySlug, keywords] of keywordsByCategory.entries()) {
         const rows = Array.from(keywords).map(keyword => ({
           bol_customer_id: customerId,
           category_slug:   categorySlug,
           keyword,
-          source:          'competitor_research', // default; advertising ook OK
-          is_brand_term:   isBrandTerm(keyword),
+          source:          'competitor_research' as const,
+          is_brand_term:   false,
         }));
         if (rows.length > 0) {
           await supabase.from('bol_keyword_master').upsert(rows, {
             onConflict: 'bol_customer_id,category_slug,keyword',
             ignoreDuplicates: true,
           });
-          keywordsUpserted += rows.length;
+          masterUpserted += rows.length;
         }
       }
-      detail.keywords_in_master = keywordsUpserted;
+      detail.master_keywords = masterUpserted;
 
-      // ── Stap C: Fetch search volume for all keywords ─────────────────────
-      // Use Search Terms API to get volume data for keywords (one at a time)
-      const currentWeek = getMondaysBefore(1)[0];
-      let totalKeywordsProcessed = 0;
+      // ── Stap B: Bepaal run-modus (backfill vs. weekly update) ─────────────
 
-      // Process keywords one by one (API doesn't support batch queries)
-      for (const [categorySlug, keywords] of keywordsByCategory.entries()) {
-        const rows: Array<{
-          bol_customer_id: string;
-          ean: null;
-          search_type: string;
-          keyword: string;
-          category_slug: string;
-          category_id: null;
-          rank: null;
-          impressions: number;
-          week_of: string;
-        }> = [];
+      // Haal alle keywords op die nog niet gebackfilld zijn
+      const { data: pendingBackfill } = await supabase
+        .from('bol_keyword_master')
+        .select('id, keyword, category_slug')
+        .eq('bol_customer_id', customerId)
+        .eq('is_brand_term', false)
+        .eq('backfill_complete', false)
+        .limit(MAX_KEYWORDS_PER_RUN);
 
-        for (const keyword of Array.from(keywords)) {
+      const isBackfillMode = (pendingBackfill?.length ?? 0) > 0;
+
+      if (isBackfillMode) {
+        // ── BACKFILL: 26 weken per keyword, max 100 keywords per run ────────
+        detail.mode = 'backfill';
+        let backfilled = 0;
+        let volumeRows = 0;
+
+        let apiCallsMade = 0;
+        let keywordsWithData = 0;
+        let keywordsWithoutData = 0;
+
+        for (const kwEntry of pendingBackfill ?? []) {
+          const keyword      = kwEntry.keyword as string;
+          const categorySlug = kwEntry.category_slug as string;
+          const masterId     = kwEntry.id as string;
+
           try {
-            const { searchTerms } = await getSearchTerms(token, keyword, 'MONTH');
+            // Eén API call geeft 26 weken terug
+            const { searchTerm: st } = await getSearchTerms(token, keyword, 'WEEK', 26);
+            apiCallsMade++;
 
-            if (searchTerms.length > 0) {
-              const st = searchTerms[0]; // Should only return one result
-              rows.push({
-                bol_customer_id: customerId,
-                ean:            null,
-                search_type:    'SEARCH',
-                keyword:        st.searchTerm.trim().toLowerCase(),
-                category_slug:  categorySlug,
-                category_id:    null,
-                rank:           null,
-                impressions:    st.total,
-                week_of:        currentWeek,
-              });
+            if (st && st.periods && st.periods.length > 0) {
+              const periods = st.periods;
+
+              // Maak één rij per week (index 0 = huidige/lopende week, sla die over)
+              // Gebruik index 1..25 = afgelopen 25 complete weken + index 0 als huidige
+              const rows: Array<{
+                bol_customer_id: string;
+                category_slug: string;
+                keyword: string;
+                search_volume: number;
+                week_of: string;
+              }> = [];
+
+              for (let i = 0; i < periods.length; i++) {
+                const weekOf = periodIndexToDateStr(mostRecentMonday, i);
+                const count  = periods[i]?.total ?? 0;
+                if (count > 0) {
+                  rows.push({
+                    bol_customer_id: customerId,
+                    category_slug:   categorySlug,
+                    keyword:         st.searchTerm.trim().toLowerCase(),
+                    search_volume:   count,
+                    week_of:         weekOf,
+                  });
+                }
+              }
+
+              if (rows.length > 0) {
+                const { error: insErr } = await supabase
+                  .from('bol_keyword_search_volume')
+                  .upsert(rows, {
+                    onConflict: 'bol_customer_id,keyword,week_of',
+                    ignoreDuplicates: true,
+                  });
+                if (insErr) {
+                  console.error(`[bol-sync-keywords] insert error for "${keyword}":`, insErr.message);
+                } else {
+                  volumeRows += rows.length;
+                  keywordsWithData++;
+                }
+              } else {
+                keywordsWithoutData++;
+              }
+            } else {
+              keywordsWithoutData++;
+            }
+
+            // Markeer keyword als gebackfilld
+            await supabase
+              .from('bol_keyword_master')
+              .update({ backfill_complete: true, last_backfill_at: new Date().toISOString() })
+              .eq('id', masterId);
+
+            backfilled++;
+          } catch (err) {
+            console.error(`[bol-sync-keywords] backfill error for "${keyword}":`, (err as Error).message);
+          }
+
+          await sleep(150); // ~6-7 keywords/sec
+        }
+
+        detail.backfilled_keywords = backfilled;
+        detail.volume_rows_inserted = volumeRows;
+        detail.api_calls_made = apiCallsMade;
+        detail.keywords_with_data = keywordsWithData;
+        detail.keywords_without_data = keywordsWithoutData;
+        detail.remaining_to_backfill = 'check next run';
+
+      } else {
+        // ── WEEKLY UPDATE: vorige complete week ophalen voor alle keywords ──
+        detail.mode = 'weekly';
+
+        // Haal alle backfilled keywords op
+        const { data: allKeywords } = await supabase
+          .from('bol_keyword_master')
+          .select('keyword, category_slug')
+          .eq('bol_customer_id', customerId)
+          .eq('is_brand_term', false)
+          .eq('backfill_complete', true);
+
+        const prevMondayStr = periodIndexToDateStr(mostRecentMonday, 1); // vorige week
+        let weeklyRows = 0;
+        let weeklyErrors = 0;
+
+        for (const kwEntry of allKeywords ?? []) {
+          const keyword      = kwEntry.keyword as string;
+          const categorySlug = kwEntry.category_slug as string;
+
+          try {
+            // number-of-periods=2: [0]=huidige (incomplete), [1]=vorige (complete)
+            const { searchTerm: st } = await getSearchTerms(token, keyword, 'WEEK', 2);
+
+            if (st && st.periods && st.periods.length > 1) {
+              const periods    = st.periods;
+              const prevCount  = periods[1]?.total ?? 0;
+
+              if (prevCount > 0) {
+                const { error: insErr } = await supabase
+                  .from('bol_keyword_search_volume')
+                  .upsert({
+                    bol_customer_id: customerId,
+                    category_slug:   categorySlug,
+                    keyword:         st.searchTerm.trim().toLowerCase(),
+                    search_volume:   prevCount,
+                    week_of:         prevMondayStr,
+                  }, {
+                    onConflict: 'bol_customer_id,keyword,week_of',
+                    ignoreDuplicates: false, // update als al bestaat
+                  });
+
+                if (insErr) {
+                  console.error(`[bol-sync-keywords] weekly error for "${keyword}":`, insErr.message);
+                  weeklyErrors++;
+                } else {
+                  weeklyRows++;
+                }
+              }
             }
           } catch (err) {
-            // Silent fail for individual keywords (some may not have data)
-            console.error(`[bol-sync-keywords] ${categorySlug}/${keyword}:`, (err as Error).message);
+            console.error(`[bol-sync-keywords] weekly fetch error for "${keyword}":`, (err as Error).message);
+            weeklyErrors++;
           }
-          await sleep(100); // Rate limiting (10 requests/sec)
+
+          await sleep(150);
         }
 
-        // Batch insert all keywords for this category
-        if (rows.length > 0) {
-          const { error: insertError } = await supabase
-            .from('bol_keyword_rankings')
-            .upsert(rows, { onConflict: 'bol_customer_id,keyword,week_of', ignoreDuplicates: true });
-
-          if (insertError) {
-            console.error(`[bol-sync-keywords] insert failed for ${categorySlug}:`, insertError.message);
-          } else {
-            totalKeywordsProcessed += rows.length;
-          }
-        }
+        detail.weekly_week = prevMondayStr;
+        detail.weekly_rows_upserted = weeklyRows;
+        detail.weekly_errors = weeklyErrors;
       }
-
-      detail.search_volume_fetched = totalKeywordsProcessed;
 
       results.push({ customerId, sellerName: customer.seller_name, status: 'ok', detail });
     } catch (err) {
