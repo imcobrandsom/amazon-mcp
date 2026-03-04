@@ -159,53 +159,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ── Block 2: Keyword / product rank data ──────────────────────────────
       let rankCount = 0;
+
+      // Bepaal maandag van huidige week als datum voor de API
+      function getMostRecentMonday(): string {
+        const d = new Date();
+        const day = d.getUTCDay(); // 0=zo, 1=ma, ...
+        const diff = day === 0 ? 6 : day - 1; // dagen terug naar maandag
+        d.setUTCDate(d.getUTCDate() - diff);
+        return d.toISOString().slice(0, 10); // 'YYYY-MM-DD'
+      }
+
+      const weekDate = getMostRecentMonday();
+
+      // Haal category_slug per EAN op (via bol_product_categories)
+      const { data: productCats } = await supabase
+        .from('bol_product_categories')
+        .select('ean, category_slug')
+        .eq('bol_customer_id', customer.id)
+        .in('ean', eans);
+
+      const eanToCategorySlug = new Map<string, string>(
+        (productCats ?? []).map(r => [r.ean as string, r.category_slug as string])
+      );
+
       for (const ean of eans) {
         try {
-          const [searchRanks, browseRanks] = await Promise.all([
-            getProductRanks(token, ean, 'SEARCH'),
-            getProductRanks(token, ean, 'BROWSE'),
-          ]);
+          const { ranks: searchRanks } = await getProductRanks(token, ean, weekDate, 'SEARCH');
 
-          const rows: Array<{
-            bol_customer_id: string;
-            ean: string;
-            search_type: string;
-            rank: number;
-            impressions: number;
-            week_of: string;
-          }> = [];
+          const categorySlug = eanToCategorySlug.get(ean) ?? null;
 
-          for (const rank of searchRanks) {
-            rows.push({
+          const rows = searchRanks
+            .filter(r => r.searchTerm) // alleen rijen mét zoekterm
+            .map(r => ({
               bol_customer_id: customer.id as string,
               ean,
-              search_type:     'SEARCH',
-              rank:            rank.rank,
-              impressions:     rank.impressions,
-              week_of:         rank.weekStartDate,
-            });
-          }
-          for (const rank of browseRanks) {
-            rows.push({
-              bol_customer_id: customer.id as string,
-              ean,
-              search_type:     'BROWSE',
-              rank:            rank.rank,
-              impressions:     rank.impressions,
-              week_of:         rank.weekStartDate,
-            });
-          }
+              search_type:    'SEARCH',
+              keyword:        r.searchTerm,
+              category_slug:  categorySlug,
+              category_id:    r.categoryId,
+              rank:           r.rank,
+              impressions:    r.impressions,
+              week_of:        weekDate,
+            }));
 
           if (rows.length > 0) {
             await supabase.from('bol_keyword_rankings').insert(rows);
             rankCount++;
           }
-        } catch (_) {
-          // Skip individual EAN errors silently
+        } catch (err) {
+          console.error(`[bol-sync-extended] getProductRanks failed for EAN ${ean}:`, (err as Error).message);
         }
-        await sleep(100);
+        await sleep(200);
       }
-      detail.rankings = `${rankCount}/${eans.length} EANs ranked`;
+      detail.rankings = `${rankCount}/${eans.length} EANs ranked (week: ${weekDate})`;
 
       // ── Block 3: Catalog enrichment + sales forecast (top-20 only) ───────
       // Use top-20 EANs sorted by visits from offer insights if available

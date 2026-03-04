@@ -14,6 +14,8 @@ import type {
   BolCampaignChartPoint,
   BolCategoryInsights,
   BolCompetitorCatalog,
+  BolKeywordCategory,
+  BolKeywordOverviewItem,
 } from '../types/bol';
 import { supabase } from './supabase';
 
@@ -187,10 +189,40 @@ export async function getBolCompetitorsForClient(
 
 // ── Keyword ranking data ──────────────────────────────────────────────────────
 
+// Oude EAN-gerichte interface (deprecated, behoud voor backwards compat)
 export async function getBolKeywordsForClient(
   customerId: string
 ): Promise<{ rankings: BolKeywordRanking[]; count: number }> {
   return apiFetch(`/bol-keywords?customerId=${customerId}`);
+}
+
+// Nieuwe keyword-gerichte interfaces
+export async function getBolKeywordOverview(
+  customerId: string,
+  categorySlug?: string
+): Promise<{
+  categories: BolKeywordCategory[];
+  total_rows: number;
+}> {
+  const params = new URLSearchParams({ customerId });
+  if (categorySlug) params.append('categorySlug', categorySlug);
+  return apiFetch(`/bol-keywords?${params}`);
+}
+
+export async function getBolKeywordDetail(
+  customerId: string,
+  keyword: string
+): Promise<{
+  keyword: string;
+  history: Array<{
+    ean: string;
+    rank: number | null;
+    impressions: number;
+    week_of: string;
+    category_slug: string;
+  }>;
+}> {
+  return apiFetch(`/bol-keywords?customerId=${customerId}&keyword=${encodeURIComponent(keyword)}`);
 }
 
 // ── Competitor research data ──────────────────────────────────────────────────

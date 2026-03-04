@@ -25,12 +25,14 @@ import {
   ChevronLeft,
   ChevronRight,
   MessageCircle,
+  Download,
 } from 'lucide-react';
 import GlobalChatPanel from '../components/Chat/GlobalChatPanel';
 import {
   getBolSummaryForClient,
   getBolCompetitorsForClient,
   getBolKeywordsForClient,
+  getBolKeywordOverview,
   getBolProducts,
   updateProductMetadata,
   getBolCampaignsForClient,
@@ -46,6 +48,7 @@ import type {
   BolRecommendation,
   BolCompetitorSnapshot,
   BolKeywordRanking,
+  BolKeywordCategory,
   BolProduct,
   BolCampaignPerformance,
   BolKeywordPerformance,
@@ -2051,124 +2054,179 @@ function CompetitorSection({ bolCustomerId, clientId }: { bolCustomerId: string;
 // ── Keywords Section ───────────────────────────────────────────────────────────
 
 function KeywordsSection({ bolCustomerId }: { bolCustomerId: string }) {
-  const [rankings, setRankings] = useState<BolKeywordRanking[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<{ categories: BolKeywordCategory[]; total_rows: number } | null>(null);
+  const [loading, setLoading]   = useState(true);
+  const [selectedCat, setSelectedCat] = useState<string | null>(null);
+  const [search, setSearch]     = useState('');
+  const [page, setPage]         = useState(0);
+  const PAGE_SIZE = 50;
 
   useEffect(() => {
     setLoading(true);
-    getBolKeywordsForClient(bolCustomerId)
-      .then(r => setRankings(r.rankings))
-      .catch(() => setRankings([]))
+    getBolKeywordOverview(bolCustomerId)
+      .then(r => {
+        setData(r);
+        if (r.categories.length > 0) setSelectedCat(r.categories[0].category_slug);
+      })
+      .catch(() => setData(null))
       .finally(() => setLoading(false));
   }, [bolCustomerId]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <RefreshCw size={18} className="animate-spin text-slate-400" />
-      </div>
-    );
+  // Stats over alle categorieën
+  const stats = useMemo(() => {
+    if (!data) return { totalKeywords: 0, totalImpressions: 0, bestKeyword: null as string | null };
+    const allKws = data.categories.flatMap(c => c.keywords);
+    const unique = new Set(allKws.map(k => k.keyword)).size;
+    const totalImpressions = allKws.reduce((s, k) => s + k.impressions, 0);
+    const best = allKws.sort((a, b) => b.impressions - a.impressions)[0]?.keyword ?? null;
+    return { totalKeywords: unique, totalImpressions, bestKeyword: best };
+  }, [data]);
+
+  // Keywords voor geselecteerde categorie, gefilterd + gepagineerd
+  const filteredKeywords = useMemo(() => {
+    const cat = data?.categories.find(c => c.category_slug === selectedCat);
+    if (!cat) return [];
+    const q = search.toLowerCase().trim();
+    return q ? cat.keywords.filter(k => k.keyword.includes(q)) : cat.keywords;
+  }, [data, selectedCat, search]);
+
+  useEffect(() => { setPage(0); }, [selectedCat, search]);
+
+  const totalPages = Math.ceil(filteredKeywords.length / PAGE_SIZE);
+  const paged      = filteredKeywords.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  // CSV export van huidige categorie
+  function exportCSV() {
+    const cat = data?.categories.find(c => c.category_slug === selectedCat);
+    if (!cat) return;
+    const lines = [
+      'keyword,impressions,trend,best_rank,best_ean',
+      ...cat.keywords.map(k =>
+        `"${k.keyword}",${k.impressions},${k.impressions_trend},${k.best_rank ?? ''},${k.best_ean ?? ''}`
+      ),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `keywords-${selectedCat}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
-  if (!rankings?.length) return <SyncPending section="keyword" />;
-
-  const searchRankings = rankings.filter(r => r.search_type === 'SEARCH');
-  const browseRankings = rankings.filter(r => r.search_type === 'BROWSE');
-
-  const avgSearch = searchRankings.length > 0
-    ? Math.round(searchRankings.reduce((s, r) => s + (r.current_rank ?? 0), 0) / searchRankings.length)
-    : null;
-  const avgBrowse = browseRankings.length > 0
-    ? Math.round(browseRankings.reduce((s, r) => s + (r.current_rank ?? 0), 0) / browseRankings.length)
-    : null;
-
-  // Build combined rows by EAN
-  const byEan = new Map<string, { search?: BolKeywordRanking; browse?: BolKeywordRanking }>();
-  for (const r of rankings) {
-    if (!byEan.has(r.ean)) byEan.set(r.ean, {});
-    if (r.search_type === 'SEARCH') byEan.get(r.ean)!.search = r;
-    else byEan.get(r.ean)!.browse = r;
-  }
-
-  const rows = Array.from(byEan.entries()).sort((a, b) => {
-    const ra = a[1].search?.current_rank ?? 9999;
-    const rb = b[1].search?.current_rank ?? 9999;
-    return ra - rb;
-  });
-
-  const TrendIcon = ({ trend }: { trend?: string }) => {
-    if (trend === 'up')   return <TrendingUp size={12} className="text-green-500" />;
-    if (trend === 'down') return <TrendingDown size={12} className="text-red-500" />;
-    if (trend === 'new')  return <Sparkles size={12} className="text-blue-500" />;
+  const TrendIcon = ({ trend }: { trend: string }) => {
+    if (trend === 'up')     return <TrendingUp size={12} className="text-green-500" />;
+    if (trend === 'down')   return <TrendingDown size={12} className="text-red-500" />;
+    if (trend === 'new')    return <Sparkles size={12} className="text-blue-500" />;
     return <Minus size={12} className="text-slate-400" />;
   };
 
+  if (loading) return (
+    <div className="flex items-center justify-center py-16">
+      <RefreshCw size={18} className="animate-spin text-slate-400" />
+    </div>
+  );
+
+  if (!data || data.categories.length === 0) return <SyncPending section="keyword" />;
+
   return (
     <div className="space-y-4">
-      {/* Stats */}
+      {/* Stat tiles */}
       <div className="grid grid-cols-3 gap-3">
-        <StatTile label="Ranked products" value={byEan.size} />
-        <StatTile
-          label="Avg search rank"
-          value={avgSearch ?? '—'}
-          sub="lower = better"
-          color={avgSearch !== null ? (avgSearch <= 20 ? 'green' : avgSearch <= 50 ? 'amber' : 'red') : 'default'}
-        />
-        <StatTile
-          label="Avg browse rank"
-          value={avgBrowse ?? '—'}
-          sub="lower = better"
-          color={avgBrowse !== null ? (avgBrowse <= 20 ? 'green' : avgBrowse <= 50 ? 'amber' : 'red') : 'default'}
-        />
+        <StatTile label="Unieke keywords" value={stats.totalKeywords} sub="Alle categorieën" />
+        <StatTile label="Totaal impressions" value={fmt(stats.totalImpressions)} sub="Afgelopen 8 weken" />
+        <StatTile label="Top keyword" value={stats.bestKeyword ?? '—'} sub="Hoogste impressions" />
       </div>
 
-      {/* Rankings table */}
+      {/* Categorie tabs + zoekbalk + export */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100">
-          <h3 className="text-sm font-semibold text-slate-800">Product Rankings</h3>
-          <p className="text-xs text-slate-400 mt-0.5">Sorted by search rank (best first) · Lower number = better position</p>
+        <div className="px-4 pt-3 border-b border-slate-100">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex gap-1 overflow-x-auto pb-1">
+              {data.categories.map(cat => (
+                <button
+                  key={cat.category_slug}
+                  onClick={() => setSelectedCat(cat.category_slug)}
+                  className={clsx(
+                    'px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors',
+                    selectedCat === cat.category_slug
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  )}
+                >
+                  {cat.category_slug} ({cat.keywords.length})
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={exportCSV}
+              className="ml-3 px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 flex items-center gap-1.5 shrink-0"
+            >
+              <Download size={12} />
+              Export CSV
+            </button>
+          </div>
+          <input
+            type="text"
+            placeholder="Zoek keyword..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full mb-3 px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
         </div>
+
+        {/* Keyword tabel */}
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100">
-                <th className="px-4 py-2 text-left font-semibold text-slate-500">EAN</th>
-                <th className="px-4 py-2 text-right font-semibold text-slate-500">Search Rank</th>
-                <th className="px-4 py-2 text-center font-semibold text-slate-500">Trend</th>
-                <th className="px-4 py-2 text-right font-semibold text-slate-500">Browse Rank</th>
+                <th className="px-4 py-2 text-left font-semibold text-slate-500">Keyword</th>
                 <th className="px-4 py-2 text-right font-semibold text-slate-500">Impressions</th>
+                <th className="px-4 py-2 text-center font-semibold text-slate-500">Trend</th>
+                <th className="px-4 py-2 text-right font-semibold text-slate-500">Beste rank</th>
+                <th className="px-4 py-2 text-left font-semibold text-slate-500">EAN</th>
+                <th className="px-4 py-2 text-right font-semibold text-slate-500">Week</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {rows.map(([ean, data], i) => (
+              {paged.map((kw, i) => (
                 <tr key={i} className="hover:bg-slate-50">
-                  <td className="px-4 py-2.5 font-mono text-slate-600">{ean}</td>
-                  <td className="px-4 py-2.5 text-right">
-                    {data.search?.current_rank !== null && data.search?.current_rank !== undefined
-                      ? <span className={clsx('font-bold',
-                          data.search.current_rank <= 20 ? 'text-green-600' :
-                          data.search.current_rank <= 50 ? 'text-amber-600' : 'text-slate-600'
-                        )}>#{data.search.current_rank}</span>
-                      : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-4 py-2.5 flex justify-center">
-                    <TrendIcon trend={data.search?.trend} />
+                  <td className="px-4 py-2.5 font-medium text-slate-800">{kw.keyword}</td>
+                  <td className="px-4 py-2.5 text-right text-slate-600">{fmt(kw.impressions)}</td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex justify-center">
+                      <TrendIcon trend={kw.impressions_trend} />
+                    </div>
                   </td>
                   <td className="px-4 py-2.5 text-right">
-                    {data.browse?.current_rank !== null && data.browse?.current_rank !== undefined
-                      ? <span className="text-slate-600 font-medium">#{data.browse.current_rank}</span>
-                      : <span className="text-slate-300">—</span>}
+                    {kw.best_rank !== null ? (
+                      <span className={clsx('font-bold',
+                        kw.best_rank <= 10 ? 'text-green-600' :
+                        kw.best_rank <= 30 ? 'text-amber-600' : 'text-slate-500'
+                      )}>#{kw.best_rank}</span>
+                    ) : <span className="text-slate-300">—</span>}
                   </td>
-                  <td className="px-4 py-2.5 text-right text-slate-600">
-                    {data.search?.current_impressions != null
-                      ? fmt(data.search.current_impressions)
-                      : '—'}
-                  </td>
+                  <td className="px-4 py-2.5 font-mono text-slate-500 text-[10px]">{kw.best_ean ?? '—'}</td>
+                  <td className="px-4 py-2.5 text-right text-slate-400">{kw.week_of?.slice(0, 10) ?? '—'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+
+        {/* Paginering */}
+        {totalPages > 1 && (
+          <div className="px-4 py-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>{filteredKeywords.length} keywords</span>
+            <div className="flex gap-2">
+              <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+                className="px-2 py-1 border border-slate-200 rounded disabled:opacity-40">←</button>
+              <span>{page + 1} / {totalPages}</span>
+              <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
+                className="px-2 py-1 border border-slate-200 rounded disabled:opacity-40">→</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

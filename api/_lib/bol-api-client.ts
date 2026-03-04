@@ -372,6 +372,53 @@ export async function getProductRanks(
   return { ranks: data.ranks ?? [], hasNextPage: data.hasNextPage ?? false };
 }
 
+/**
+ * Search Terms API - get search volume data for keywords
+ * GET /retailer/insights/search-terms
+ * Returns search volume and related data for up to 100 keywords at once
+ */
+export interface BolSearchTerm {
+  searchTerm: string;
+  total: number;           // total search volume count
+  type: 'count';           // always 'count'
+  countries?: Array<{      // breakdown per country (optional)
+    count: number;
+  }>;
+  periods?: Array<{        // breakdown per time period (optional)
+    count: number;
+  }>;
+  relatedSearchTerms?: Array<{ searchTerm: string }>; // related keywords
+}
+
+export async function getSearchTerms(
+  token: string,
+  searchTerm: string,      // single keyword OR comma-separated list (max 100)
+  period: string = 'MONTH', // e.g. 'WEEK', 'MONTH', '24-HOURS'
+  numberOfPeriods: number = 1 // number of periods to look back
+): Promise<{ searchTerms: BolSearchTerm[] }> {
+  const params = new URLSearchParams({
+    'search-term': searchTerm,
+    'period': period,
+    'number-of-periods': String(numberOfPeriods),
+  });
+
+  const res = await fetch(
+    `https://api.bol.com/retailer/insights/search-terms?${params}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.retailer.v10+json',
+      },
+    }
+  );
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(`getSearchTerms: ${res.status}${errorText ? ' - ' + errorText : ''}`);
+  }
+  const data = await res.json() as { searchTerms?: BolSearchTerm[] };
+  return { searchTerms: data.searchTerms ?? [] };
+}
+
 // ── Catalog / content ─────────────────────────────────────────────────────────
 
 /** Fetch full published catalog product data for a given EAN */

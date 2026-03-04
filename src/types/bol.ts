@@ -167,6 +167,32 @@ export interface BolKeywordRanking {
   trend: 'up' | 'down' | 'stable' | 'new';
 }
 
+// ── Keyword Intelligence (nieuwe types) ─────────────────────────────────────
+
+export interface BolKeywordOverviewItem {
+  keyword: string;
+  impressions: number;
+  impressions_trend: 'up' | 'down' | 'stable' | 'new';
+  best_rank: number | null;
+  best_ean: string | null;
+  week_of: string;
+}
+
+export interface BolKeywordCategory {
+  category_slug: string;
+  keywords: BolKeywordOverviewItem[];
+}
+
+export interface BolKeywordMaster {
+  id: string;
+  bol_customer_id: string;
+  category_slug: string;
+  keyword: string;
+  source: 'competitor_research' | 'advertising' | 'product_ranks';
+  is_brand_term: boolean;
+  first_seen_at: string;
+}
+
 // ── Competitor Research Types ────────────────────────────────────────
 
 export interface BolTrendingKeyword {
