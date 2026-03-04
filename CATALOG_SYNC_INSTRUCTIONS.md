@@ -37,11 +37,24 @@ COMMENT ON COLUMN bol_raw_snapshots.catalog_attributes IS
 
 ## Stap 2: Catalog sync uitvoeren (eerste keer)
 
-De catalog sync haalt voor **elk product** de volledige catalog data op via de API. Dit kost ongeveer:
-- **784 producten** (FashionPower) × 100ms = **~1-2 minuten**
-- Gebruikt rate limiting (10 calls/seconde) om API limits te respecteren
+De catalog sync haalt voor **elk product** de volledige catalog data op via de API.
 
-### Via curl (aanbevolen voor eerste keer):
+⚠️ **Important:** Due to Vercel's 60-second timeout limit, the sync processes **50 products per run**. For 784 products, you need to run it ~16 times (or use the automated script).
+
+### Option A: Automated script (recommended):
+
+```bash
+# Run full sync automatically (handles all batches)
+./scripts/run-full-catalog-sync.sh
+```
+
+This script will:
+- Run the sync endpoint repeatedly until all products are processed
+- Show progress after each batch
+- Handle errors gracefully
+- Complete in ~12-15 minutes for 784 products
+
+### Option B: Manual curl (single batch of 50 products):
 
 ```bash
 # FashionPower customer ID
@@ -51,6 +64,8 @@ curl -X POST https://amazon-mcp-eight.vercel.app/api/bol-sync-catalog \
   -H "Content-Type: application/json" \
   -d "{\"customerId\": \"$CUSTOMER_ID\"}"
 ```
+
+Then run it again until `"complete": true` (check `remaining_to_process` in response).
 
 ### Response voorbeeld:
 ```json
