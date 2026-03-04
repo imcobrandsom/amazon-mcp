@@ -66,6 +66,7 @@ export interface BolProduct {
   ean: string;
   bsku: string | null;
   title: string | null;
+  description: string | null;  // Product description (from inventory API)
   gradedStock: number;
   regularStock: number;
   offerId: string | null;

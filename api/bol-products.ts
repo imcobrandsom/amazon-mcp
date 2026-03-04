@@ -9,6 +9,7 @@ interface InvItem {
   ean: string;
   bsku: string | null;
   title: string | null;
+  description?: string | null;  // Product description from inventory API
   gradedStock: number;
   regularStock: number;
 }
@@ -32,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const supabase = createAdminClient();
 
-  const [invResult, listResult, metadataResult] = await Promise.all([
+  const [invResult, allListResults, metadataResult] = await Promise.all([
     supabase
       .from('bol_raw_snapshots')
       .select('raw_data')
@@ -41,22 +42,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .order('fetched_at', { ascending: false })
       .limit(1)
       .single(),
+    // Fetch multiple listings snapshots to find the newest CSV_OFFERS snapshot
     supabase
       .from('bol_raw_snapshots')
       .select('raw_data')
       .eq('bol_customer_id', customerId)
       .eq('data_type', 'listings')
       .order('fetched_at', { ascending: false })
-      .limit(1)
-      .single(),
+      .limit(10), // Check last 10 snapshots
     supabase
       .from('bol_product_metadata')
       .select('ean, eol')
       .eq('bol_customer_id', customerId),
   ]);
 
+  // Find the newest snapshot with 'offers' array (CSV export format)
+  const listResult = allListResults.data?.find(
+    snap => Array.isArray((snap.raw_data as Record<string, unknown>)?.offers)
+  ) ?? { raw_data: { offers: [] } };
+
   const invItems: InvItem[]     = ((invResult.data?.raw_data as Record<string, unknown>)?.items  as InvItem[])  ?? [];
-  const listOffers: ListOffer[] = ((listResult.data?.raw_data as Record<string, unknown>)?.offers as ListOffer[]) ?? [];
+  const listOffers: ListOffer[] = ((listResult.raw_data as Record<string, unknown>)?.offers as ListOffer[]) ?? [];
 
   // Index listings by EAN for O(1) join
   const listByEan = new Map(listOffers.map(o => [o.ean, o]));
@@ -81,6 +87,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ean:            item.ean,
         bsku:           item.bsku ?? null,
         title:          item.title ?? null,
+        description:    item.description ?? null,  // Include description
         gradedStock:    item.gradedStock ?? 0,
         regularStock:   item.regularStock ?? 0,
         offerId:        offer?.offerId ?? null,

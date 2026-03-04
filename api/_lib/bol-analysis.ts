@@ -37,12 +37,23 @@ export function analyzeContent(
   }
 
   const titleScores: number[] = [];
+  const descriptionScores: number[] = [];
   const priceSet: boolean[] = [];
   const forbiddenKeywords = [
     'Milieuvriendelijk','Eco','Duurzaam','Biologisch afbreekbaar','CO2-neutraal','Klimaatneutraal',
   ];
 
+  // Description quality tracking
+  let descriptionsWithIntro = 0;
+  let descriptionsWithUSPs = 0;
+  let descriptionsWithBullets = 0;
+  let descriptionsWithSpecs = 0;
+  let descriptionsComplete = 0;
+  let descriptionsPartial = 0;
+  let descriptionsMissing = 0;
+
   for (const offer of offers) {
+    // ── Title Analysis ────────────────────────────────────────────────────────────
     // bol.com offers export CSV does NOT include product titles for catalog products.
     // 'unknown-product-title' only applies to EANs not yet in the bol.com catalog.
     const title = offer['title'] ?? offer['Title'] ?? offer['unknown-product-title'] ?? '';
@@ -54,6 +65,93 @@ export function analyzeContent(
     else if (len > 175) titleScores.push(80); // too long but fixable
     else titleScores.push(0);
 
+    // ── Description Analysis ──────────────────────────────────────────────────────
+    const description = offer['description'] ?? offer['Description'] ?? '';
+    const descLen = description.length;
+
+    if (descLen === 0) {
+      descriptionScores.push(0);
+      descriptionsMissing++;
+    } else {
+      let descScore = 0;
+      let componentsFound = 0;
+
+      // Check for intro (first 300 chars should contain meaningful content)
+      const intro = description.substring(0, 300);
+      const hasIntro = intro.length >= 100 && /[a-zA-Z]{50,}/.test(intro);
+      if (hasIntro) {
+        descScore += 25;
+        componentsFound++;
+        descriptionsWithIntro++;
+      }
+
+      // Check for USPs (look for bullet points or numbered list items)
+      // Pattern: lines starting with • - * or numbers, at least 3 items
+      const uspPatterns = [
+        /[•\-\*]\s*.{20,}/g,           // Bullet points
+        /\d+\.\s*.{20,}/g,             // Numbered lists
+        /<li[^>]*>.{20,}<\/li>/gi,     // HTML list items
+        /\n\s*[-•]\s*.{20,}/g          // Line-break bullets
+      ];
+      let uspCount = 0;
+      for (const pattern of uspPatterns) {
+        const matches = description.match(pattern);
+        if (matches && matches.length > uspCount) {
+          uspCount = matches.length;
+        }
+      }
+      const hasUSPs = uspCount >= 3;
+      if (hasUSPs) {
+        descScore += 25;
+        componentsFound++;
+        descriptionsWithUSPs++;
+      }
+
+      // Check for bullet points / feature list (5+ items)
+      const hasBullets = uspCount >= 5;
+      if (hasBullets) {
+        descScore += 25;
+        componentsFound++;
+        descriptionsWithBullets++;
+      }
+
+      // Check for specifications (technical details, measurements, materials)
+      // Look for common spec indicators
+      const specKeywords = [
+        /materiaal:?\s*\w+/i,
+        /afmeting:?\s*[\d\s,x×]+/i,
+        /gewicht:?\s*[\d\s,]+/i,
+        /kleur:?\s*\w+/i,
+        /maat:?\s*[\w\d]+/i,
+        /specificaties?/i,
+        /technische?\s+gegevens/i,
+        /eigenschappen/i,
+        /<table/i,                     // Spec tables
+      ];
+      let hasSpecs = false;
+      for (const pattern of specKeywords) {
+        if (pattern.test(description)) {
+          hasSpecs = true;
+          break;
+        }
+      }
+      if (hasSpecs) {
+        descScore += 25;
+        componentsFound++;
+        descriptionsWithSpecs++;
+      }
+
+      descriptionScores.push(descScore);
+
+      // Track completeness
+      if (componentsFound >= 3) {
+        descriptionsComplete++;
+      } else if (componentsFound > 0) {
+        descriptionsPartial++;
+      }
+    }
+
+    // ── Price Analysis ────────────────────────────────────────────────────────────
     // bol.com v10 offers export: price column is 'price'; fall back to 'unit-price'
     const priceRaw = offer['price'] ?? offer['unit-price'] ?? offer['Price'] ?? '';
     // Handle Dutch decimal format (comma) and strip any currency symbol
@@ -62,6 +160,7 @@ export function analyzeContent(
     priceSet.push(!isNaN(price) && price > 0);
   }
 
+  // ── Scoring ───────────────────────────────────────────────────────────────────
   // When ALL titles are missing it means the offers export doesn't include title data
   // (normal for bol.com LVB/FBB sellers — catalog titles are managed by bol.com).
   // In that case skip title scoring to avoid artificially low scores.
@@ -69,12 +168,23 @@ export function analyzeContent(
   const shortTitles     = titleScores.filter(s => s === 65).length;
   const allTitlesMissing = missingTitles === offers.length;
 
+  // Same logic for descriptions: when ALL are missing, the export doesn't include them
+  const allDescriptionsMissing = descriptionsMissing === offers.length;
+
   const avgTitleScore = allTitlesMissing ? 50 : avg(titleScores);
+  const avgDescScore  = allDescriptionsMissing ? 50 : avg(descriptionScores);
   const priceSetPct   = priceSet.filter(Boolean).length / priceSet.length;
-  const score         = Math.round(avgTitleScore * 0.7 + priceSetPct * 100 * 0.3);
+
+  // Weighted scoring: title 40%, description 40%, price 20%
+  const score = Math.round(
+    avgTitleScore * 0.4 +
+    avgDescScore * 0.4 +
+    priceSetPct * 100 * 0.2
+  );
 
   const recs: AnalysisResult['recommendations'] = [];
 
+  // ── Title Recommendations ─────────────────────────────────────────────────────
   // Only raise title recommendations when some (not all) titles are present but incomplete
   if (!allTitlesMissing && missingTitles > 0)
     recs.push({ priority: 'high', title: 'Missing product titles',
@@ -86,6 +196,34 @@ export function analyzeContent(
       action: `${shortTitles} offer(s) have titles under 150 chars. Expand to 150–175 chars with relevant keywords.`,
       impact: '10–20% CTR improvement' });
 
+  // ── Description Recommendations ───────────────────────────────────────────────
+  // Only raise description recommendations when some (not all) descriptions are present but incomplete
+  if (!allDescriptionsMissing && descriptionsMissing > 0)
+    recs.push({ priority: 'high', title: 'Missing product descriptions',
+      action: `${descriptionsMissing} offer(s) have no description. Add a complete description with intro (300 chars), 3 USPs, 5 bullet points, and specifications.`,
+      impact: '25–40% conversion improvement' });
+
+  if (!allDescriptionsMissing && descriptionsPartial > 0 && descriptionsMissing === 0)
+    recs.push({ priority: 'high', title: 'Incomplete product descriptions',
+      action: `${descriptionsPartial} offer(s) have incomplete descriptions. Best practice: intro text (first 300 chars with keywords), 3 USPs, 5+ bullet points, technical specifications.`,
+      impact: '15–30% conversion improvement' });
+
+  if (!allDescriptionsMissing && descriptionsWithIntro < offers.length && descriptionsMissing < offers.length)
+    recs.push({ priority: 'medium', title: 'Add intro text to descriptions',
+      action: `${offers.length - descriptionsWithIntro - descriptionsMissing} description(s) lack an intro paragraph. First 300 characters are indexed by Google — include main keywords here.`,
+      impact: '10–15% SEO improvement' });
+
+  if (!allDescriptionsMissing && descriptionsWithUSPs < offers.length / 2)
+    recs.push({ priority: 'medium', title: 'Add USPs to descriptions',
+      action: `Only ${descriptionsWithUSPs} product(s) have clear USPs (Unique Selling Points). Add 3 USPs per product highlighting key benefits.`,
+      impact: '15–25% conversion lift' });
+
+  if (!allDescriptionsMissing && descriptionsWithBullets < offers.length / 2)
+    recs.push({ priority: 'medium', title: 'Add bullet points to descriptions',
+      action: `Only ${descriptionsWithBullets} product(s) have bullet point features. Add 5+ concise bullets summarizing main characteristics.`,
+      impact: '10–20% readability improvement' });
+
+  // ── Price Recommendations ─────────────────────────────────────────────────────
   if (priceSetPct < 1)
     recs.push({ priority: 'medium', title: 'Offers missing price',
       action: `${priceSet.filter(v => !v).length} offer(s) have no price set. This disables the Buy Box.`,
@@ -140,12 +278,23 @@ export function analyzeContent(
     score,
     findings: {
       offers_count:             offers.length,
+      // Title metrics
       avg_title_score:          Math.round(avgTitleScore),
       titles_in_range:          titleScores.filter(s => s === 100).length,
       titles_short:             shortTitles,
       titles_missing:           missingTitles,
-      // Signals that title data is not available in the offers export (LVB/FBB sellers)
       titles_not_in_export:     allTitlesMissing,
+      // Description metrics (new)
+      avg_description_score:    Math.round(avgDescScore),
+      descriptions_complete:    descriptionsComplete,
+      descriptions_partial:     descriptionsPartial,
+      descriptions_missing:     descriptionsMissing,
+      descriptions_not_in_export: allDescriptionsMissing,  // Signal that description data unavailable
+      descriptions_with_intro:  descriptionsWithIntro,
+      descriptions_with_usps:   descriptionsWithUSPs,
+      descriptions_with_bullets: descriptionsWithBullets,
+      descriptions_with_specs:  descriptionsWithSpecs,
+      // Price metrics
       price_set_pct:            Math.round(priceSetPct * 100),
       forbidden_keyword_warning: forbiddenKeywords.some(kw =>
         offers.some(o => (o['title'] ?? o['unknown-product-title'] ?? '').toLowerCase().includes(kw.toLowerCase()))

@@ -797,6 +797,7 @@ export async function getProductList(
       Authorization: `Bearer ${token}`,
       Accept: 'application/vnd.retailer.v10+json',
       'Content-Type': 'application/vnd.retailer.v10+json',
+      'Accept-Language': 'nl',
     },
     body: JSON.stringify({
       countryCode: params.countryCode ?? 'NL',

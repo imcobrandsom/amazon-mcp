@@ -519,6 +519,60 @@ function ProductsSection({
     return { total, optimal, tooLong, short, missing };
   }, [products]);
 
+  // ── description stats computed from products ──
+  const descriptionStats = useMemo(() => {
+    const ps = products ?? [];
+    const total = ps.length;
+
+    let complete = 0, partial = 0, missing = 0;
+    let withIntro = 0, withUSPs = 0, withBullets = 0, withSpecs = 0;
+
+    for (const p of ps) {
+      const desc = p.description ?? '';
+
+      if (desc.length === 0) {
+        missing++;
+        continue;
+      }
+
+      let componentsFound = 0;
+
+      // Check intro (first 300 chars)
+      const intro = desc.substring(0, 300);
+      const hasIntro = intro.length >= 100 && /[a-zA-Z]{50,}/.test(intro);
+      if (hasIntro) { componentsFound++; withIntro++; }
+
+      // Check USPs/bullets (3+ items)
+      const uspPatterns = [
+        /[•\-\*]\s*.{20,}/g,
+        /\d+\.\s*.{20,}/g,
+        /<li[^>]*>.{20,}<\/li>/gi,
+        /\n\s*[-•]\s*.{20,}/g
+      ];
+      let uspCount = 0;
+      for (const pattern of uspPatterns) {
+        const matches = desc.match(pattern);
+        if (matches && matches.length > uspCount) uspCount = matches.length;
+      }
+      if (uspCount >= 3) { componentsFound++; withUSPs++; }
+      if (uspCount >= 5) { componentsFound++; withBullets++; }
+
+      // Check specs
+      const specKeywords = [
+        /materiaal:?\s*\w+/i, /afmeting:?\s*[\d\s,x×]+/i, /gewicht:?\s*[\d\s,]+/i,
+        /kleur:?\s*\w+/i, /maat:?\s*[\w\d]+/i, /specificaties?/i,
+        /technische?\s+gegevens/i, /eigenschappen/i, /<table/i,
+      ];
+      const hasSpecs = specKeywords.some(p => p.test(desc));
+      if (hasSpecs) { componentsFound++; withSpecs++; }
+
+      if (componentsFound >= 3) complete++;
+      else if (componentsFound > 0) partial++;
+    }
+
+    return { total, complete, partial, missing, withIntro, withUSPs, withBullets, withSpecs };
+  }, [products]);
+
   // ── price stats computed from products (listings JSON has prices; CSV export may not) ──
   const priceStats = useMemo(() => {
     const ps = products ?? [];
@@ -648,7 +702,92 @@ function ProductsSection({
         </div>
       </div>
 
-      {/* Description quality section — only shown when catalog analysis is available (future feature) */}
+      {/* Description quality breakdown */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100">
+          <h3 className="text-sm font-semibold text-slate-800">Description Quality Breakdown</h3>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Complete = intro (300 chars) + 3 USPs + 5 bullets + specs · {products ? descriptionStats.total : '…'} products
+          </p>
+          {products && descriptionStats.missing === descriptionStats.total && (
+            <div className="mt-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+              <p className="text-xs text-amber-800">
+                ℹ️ Description data not available in current export. For FBB sellers, descriptions are managed in bol.com catalog. Use Catalog API for full analysis.
+              </p>
+            </div>
+          )}
+        </div>
+        <div className="divide-y divide-slate-100">
+          {products === null ? (
+            [1, 2, 3, 4, 5, 6, 7].map(i => (
+              <div key={i} className="flex items-center gap-4 px-4 py-3 animate-pulse">
+                <div className="h-3 bg-slate-100 rounded flex-1" />
+                <div className="w-32 h-1.5 bg-slate-100 rounded-full" />
+                <div className="w-10 h-3 bg-slate-100 rounded" />
+              </div>
+            ))
+          ) : (
+            <>
+              {/* Overall completeness */}
+              {[
+                { label: 'Complete descriptions', count: descriptionStats.complete, good: true, bad: false },
+                { label: 'Partial descriptions',  count: descriptionStats.partial,  good: false, bad: descriptionStats.partial > 0 },
+                { label: 'Missing descriptions',  count: descriptionStats.missing,  good: false, bad: descriptionStats.missing > 0 },
+              ].map(row => {
+                const pct = descriptionStats.total > 0 ? Math.round((row.count / descriptionStats.total) * 100) : 0;
+                return (
+                  <div key={row.label} className="flex items-center gap-4 px-4 py-3">
+                    <span className="text-xs text-slate-600 flex-1">{row.label}</span>
+                    <div className="w-32 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className={clsx('h-full rounded-full', row.good ? 'bg-green-500' : row.bad ? 'bg-red-400' : 'bg-slate-300')}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className={clsx('text-xs font-semibold w-10 text-right',
+                      row.good ? 'text-green-600' : row.bad && row.count > 0 ? 'text-red-600' : 'text-slate-400'
+                    )}>
+                      {row.count}
+                    </span>
+                    <span className="text-xs text-slate-400 w-8 text-right">{pct}%</span>
+                  </div>
+                );
+              })}
+              {/* Component breakdown */}
+              <div className="px-4 py-2 bg-slate-50">
+                <p className="text-[10px] uppercase tracking-wide font-semibold text-slate-500">Component Breakdown</p>
+              </div>
+              {[
+                { label: 'With intro paragraph (first 300 chars)', count: descriptionStats.withIntro },
+                { label: 'With USPs (3+ items)',                   count: descriptionStats.withUSPs },
+                { label: 'With bullet points (5+ items)',          count: descriptionStats.withBullets },
+                { label: 'With specifications',                    count: descriptionStats.withSpecs },
+              ].map(row => {
+                const pct = descriptionStats.total > 0 ? Math.round((row.count / descriptionStats.total) * 100) : 0;
+                const isGood = pct >= 80;
+                const isBad = pct < 50;
+                return (
+                  <div key={row.label} className="flex items-center gap-4 px-4 py-2.5">
+                    <span className="text-xs text-slate-600 flex-1">{row.label}</span>
+                    <div className="w-32 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className={clsx('h-full rounded-full', isGood ? 'bg-green-500' : isBad ? 'bg-amber-400' : 'bg-blue-400')}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className={clsx('text-xs font-semibold w-10 text-right',
+                      isGood ? 'text-green-600' : isBad ? 'text-amber-600' : 'text-blue-600'
+                    )}>
+                      {row.count}
+                    </span>
+                    <span className="text-xs text-slate-400 w-8 text-right">{pct}%</span>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+      </div>
 
       {/* Offer insights table */}
       {hasInsights && (
