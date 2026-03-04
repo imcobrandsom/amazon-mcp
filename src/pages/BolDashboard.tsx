@@ -1846,16 +1846,24 @@ function CampaignSection({
 function CompetitorSection({ bolCustomerId, clientId }: { bolCustomerId: string; clientId: string }) {
   const [competitorInsights, setCompetitorInsights] = useState<BolCategoryInsights[] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
+    setError(null);
     getBolCategoryInsights(bolCustomerId)
       .then(r => {
+        console.log('[CompetitorSection] API response:', r);
         // API returns { insights: BolCategoryInsights[] } when no categorySlug
         const insights = Array.isArray(r.insights) ? r.insights : [];
+        console.log('[CompetitorSection] Parsed insights:', insights);
         setCompetitorInsights(insights);
       })
-      .catch(() => setCompetitorInsights([]))
+      .catch(err => {
+        console.error('[CompetitorSection] Error fetching insights:', err);
+        setError(err.message || 'Failed to load competitor insights');
+        setCompetitorInsights([]);
+      })
       .finally(() => setLoading(false));
   }, [bolCustomerId]);
 
@@ -1863,6 +1871,21 @@ function CompetitorSection({ bolCustomerId, clientId }: { bolCustomerId: string;
     return (
       <div className="flex items-center justify-center py-16">
         <RefreshCw size={18} className="animate-spin text-slate-400" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-xl p-12 text-center">
+        <div className="max-w-md mx-auto">
+          <AlertTriangle size={48} className="text-red-400 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-red-800 mb-2">Error loading competitor data</h3>
+          <p className="text-sm text-red-600 mb-4">{error}</p>
+          <p className="text-xs text-red-500">
+            Check the browser console for more details.
+          </p>
+        </div>
       </div>
     );
   }
@@ -1955,7 +1978,9 @@ function CompetitorSection({ bolCustomerId, clientId }: { bolCustomerId: string;
             </thead>
             <tbody className="divide-y divide-slate-100">
               {competitorInsights.map((insight, i) => {
-                const categoryName = insight.category_path.split(' > ').pop() || insight.category_slug;
+                const categoryName = insight.category_path
+                  ? insight.category_path.split(' > ').pop() || insight.category_slug
+                  : insight.category_slug;
                 const priceGapColor = (insight.price_gap_percent ?? 0) >= 0 ? 'text-green-600' : 'text-red-600';
                 const contentColor = (insight.content_quality_avg ?? 0) >= 70
                   ? 'bg-green-100 text-green-700'
@@ -1965,7 +1990,7 @@ function CompetitorSection({ bolCustomerId, clientId }: { bolCustomerId: string;
                 const topKeywords = (insight.trending_keywords || []).slice(0, 3);
 
                 return (
-                  <tr key={i} className="hover:bg-slate-50">
+                  <tr key={insight.id || i} className="hover:bg-slate-50">
                     <td className="px-4 py-2.5 text-slate-800 font-medium">{categoryName}</td>
                     <td className="px-4 py-2.5 text-center text-slate-600">{insight.your_product_count}</td>
                     <td className="px-4 py-2.5 text-center text-slate-600">{insight.competitor_count}</td>

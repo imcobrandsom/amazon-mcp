@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getBolCategoryInsights, getBolCompetitorCatalog } from '../lib/bol-api';
+import { getBolCategoryInsights, getBolCompetitorCatalog, getBolSummaryForClient, listBolCustomers } from '../lib/bol-api';
 import type { BolCategoryInsights, BolCompetitorCatalog } from '../types/bol';
 import {
   ChevronLeft,
@@ -17,11 +17,13 @@ export default function BolCompetitorResearch() {
   const { clientId } = useParams<{ clientId: string }>();
   const navigate = useNavigate();
 
+  const [bolCustomerId, setBolCustomerId] = useState<string>('');
   const [allInsights, setAllInsights] = useState<BolCategoryInsights[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [currentInsights, setCurrentInsights] = useState<BolCategoryInsights | null>(null);
   const [competitors, setCompetitors] = useState<BolCompetitorCatalog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -36,14 +38,35 @@ export default function BolCompetitorResearch() {
     setPage(0);
   }, [search, sortKey, sortDir, pageSize]);
 
-  // Fetch all categories on mount
+  // First: Get bolCustomerId from clientId
   useEffect(() => {
     if (!clientId) return;
 
     (async () => {
-      setLoading(true);
       try {
-        const { insights } = await getBolCategoryInsights(clientId);
+        const { customers } = await listBolCustomers();
+        const customer = customers.find(c => c.client_id === clientId);
+        if (customer) {
+          setBolCustomerId(customer.id);
+        } else {
+          setError('No Bol.com customer linked to this client');
+        }
+      } catch (err) {
+        console.error('Failed to fetch Bol customers:', err);
+        setError('Failed to load customer data');
+      }
+    })();
+  }, [clientId]);
+
+  // Fetch all categories on mount
+  useEffect(() => {
+    if (!bolCustomerId) return;
+
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const { insights } = await getBolCategoryInsights(bolCustomerId);
         const insightsArray = Array.isArray(insights) ? insights : insights ? [insights] : [];
         setAllInsights(insightsArray);
 
@@ -53,37 +76,40 @@ export default function BolCompetitorResearch() {
         }
       } catch (err) {
         console.error('Failed to load category insights:', err);
+        setError('Failed to load category insights');
       } finally {
         setLoading(false);
       }
     })();
-  }, [clientId]);
+  }, [bolCustomerId]);
 
   // Fetch competitors when category changes
   useEffect(() => {
-    if (!clientId || !selectedCategory) return;
+    if (!bolCustomerId || !selectedCategory) return;
 
     (async () => {
       setLoading(true);
+      setError(null);
       try {
         // Get category insights
-        const { insights } = await getBolCategoryInsights(clientId, selectedCategory);
+        const { insights } = await getBolCategoryInsights(bolCustomerId, selectedCategory);
         setCurrentInsights(insights as BolCategoryInsights);
 
         // Get competitor data
         const { competitors: comps } = await getBolCompetitorCatalog(
-          clientId,
+          bolCustomerId,
           selectedCategory,
           100
         );
         setCompetitors(comps);
       } catch (err) {
         console.error('Failed to load competitors:', err);
+        setError('Failed to load competitor data');
       } finally {
         setLoading(false);
       }
     })();
-  }, [clientId, selectedCategory]);
+  }, [bolCustomerId, selectedCategory]);
 
   // Filter & sort
   const sorted = useMemo(() => {
@@ -114,6 +140,34 @@ export default function BolCompetitorResearch() {
   const totalPages = Math.ceil(sorted.length / pageSize);
   const paged = sorted.slice(page * pageSize, (page + 1) * pageSize);
 
+  if (loading && !bolCustomerId) {
+    return (
+      <div className="min-h-screen bg-gray-900 p-8">
+        <div className="text-gray-400">Loading customer data...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-900 p-8">
+        <button
+          onClick={() => navigate(`/clients/${clientId}/bol`)}
+          className="flex items-center gap-2 text-blue-400 hover:text-blue-300 mb-4"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Dashboard
+        </button>
+        <div className="bg-red-900/20 border border-red-800 rounded-lg p-8 text-center">
+          <p className="text-red-400 mb-4">{error}</p>
+          <p className="text-red-500 text-sm">
+            Check the browser console for more details.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900 p-8">
@@ -126,7 +180,7 @@ export default function BolCompetitorResearch() {
     return (
       <div className="min-h-screen bg-gray-900 p-8">
         <button
-          onClick={() => navigate(`/bol-dashboard/${clientId}`)}
+          onClick={() => navigate(`/clients/${clientId}/bol`)}
           className="flex items-center gap-2 text-blue-400 hover:text-blue-300 mb-4"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -150,7 +204,7 @@ export default function BolCompetitorResearch() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">Competitor Research</h1>
         <button
-          onClick={() => navigate(`/bol-dashboard/${clientId}`)}
+          onClick={() => navigate(`/clients/${clientId}/bol`)}
           className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
