@@ -384,13 +384,27 @@ export async function getContentTrends(customerId: string) {
 }
 
 export async function uploadContentBase(customerId: string, file: File): Promise<{ uploaded: number; skipped: number; errors: string[] }> {
-  const formData = new FormData();
-  formData.append('customerId', customerId);
-  formData.append('file', file);
+  // Convert file to base64
+  const fileData = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result as string;
+      // Remove data:...;base64, prefix
+      const base64Data = base64.split(',')[1];
+      resolve(base64Data);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 
   const r = await fetch(`${BASE}/bol-content-upload`, {
     method: 'POST',
-    body: formData,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      customerId,
+      fileData,
+      filename: file.name,
+    }),
   });
 
   if (!r.ok) throw new Error(await r.text());

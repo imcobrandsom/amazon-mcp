@@ -1,12 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createAdminClient } from './_lib/supabase-admin';
 import * as XLSX from 'xlsx';
-import formidable from 'formidable';
-import * as fs from 'fs';
 
+// Enable body parsing for JSON
 export const config = {
   api: {
-    bodyParser: false,
+    bodyParser: true,
+    bodyLimit: '10mb',
   },
 };
 
@@ -18,39 +18,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const supabase = createAdminClient();
 
   try {
-    // Parse multipart form data with formidable
-    const form = formidable({ multiples: false });
-
-    const { fields, files } = await new Promise<{
-      fields: formidable.Fields;
-      files: formidable.Files;
-    }>((resolve, reject) => {
-      form.parse(req as any, (err, fields, files) => {
-        if (err) reject(err);
-        else resolve({ fields, files });
-      });
-    });
-
-    // Extract customerId
-    const customerId = Array.isArray(fields.customerId)
-      ? fields.customerId[0]
-      : fields.customerId;
+    // Expect JSON body with base64 encoded file
+    const { customerId, fileData, filename } = req.body;
 
     if (!customerId || typeof customerId !== 'string') {
       return res.status(400).json({ error: 'customerId required' });
     }
 
-    // Extract file
-    const fileArray = Array.isArray(files.file) ? files.file : [files.file];
-    const file = fileArray[0];
-
-    if (!file) {
-      return res.status(400).json({ error: 'file required' });
+    if (!fileData || typeof fileData !== 'string') {
+      return res.status(400).json({ error: 'fileData (base64) required' });
     }
 
-    // Read file buffer
-    const fileBuffer = fs.readFileSync(file.filepath);
-    const filename = file.originalFilename || 'unknown.xlsx';
+    // Decode base64 to buffer
+    const fileBuffer = Buffer.from(fileData, 'base64');
+    const actualFilename = filename || 'unknown.xlsx';
 
     // Parse Excel
     const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
@@ -85,7 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           sku: row.SKU?.toString().trim() ?? null,
           title: row.Title?.trim() ?? null,
           description: row.Description?.trim() ?? null,
-          source_filename: filename,
+          source_filename: actualFilename,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'bol_customer_id,ean' }
@@ -97,13 +78,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } else {
         uploaded++;
       }
-    }
-
-    // Cleanup temporary file
-    try {
-      fs.unlinkSync(file.filepath);
-    } catch (cleanupError) {
-      console.warn('Failed to cleanup temp file:', cleanupError);
     }
 
     return res.status(200).json({ uploaded, skipped, errors });
