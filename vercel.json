@@ -36,6 +36,10 @@
     }
   ],
   "functions": {
+    "api/bol-content-upload.ts": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
     "api/bol-content-*.ts": {
       "maxDuration": 30,
       "memory": 1024

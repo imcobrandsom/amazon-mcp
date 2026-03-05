@@ -48,19 +48,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       Description?: string;
     }>(sheet);
 
-    let uploaded = 0;
-    let skipped = 0;
-    const errors: string[] = [];
+    // Prepare all records for batch insert
+    const records = rows
+      .map(row => {
+        const ean = row.EAN?.toString().trim();
+        if (!ean) return null;
 
-    for (const row of rows) {
-      const ean = row.EAN?.toString().trim();
-      if (!ean) {
-        skipped++;
-        continue;
-      }
-
-      const { error } = await supabase.from('bol_content_base').upsert(
-        {
+        return {
           bol_customer_id: customerId,
           ean,
           sku: row.SKU?.toString().trim() ?? null,
@@ -68,15 +62,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           description: row.Description?.trim() ?? null,
           source_filename: actualFilename,
           updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'bol_customer_id,ean' }
-      );
+        };
+      })
+      .filter(Boolean);
+
+    const skipped = rows.length - records.length;
+
+    // Batch upsert in chunks of 500 (Supabase limit is 1000, but safer to stay lower)
+    const BATCH_SIZE = 500;
+    let uploaded = 0;
+    const errors: string[] = [];
+
+    for (let i = 0; i < records.length; i += BATCH_SIZE) {
+      const batch = records.slice(i, i + BATCH_SIZE);
+      const { error, count } = await supabase
+        .from('bol_content_base')
+        .upsert(batch, { onConflict: 'bol_customer_id,ean' });
 
       if (error) {
-        errors.push(`EAN ${ean}: ${error.message}`);
-        skipped++;
+        errors.push(`Batch ${i}-${i + batch.length}: ${error.message}`);
       } else {
-        uploaded++;
+        uploaded += batch.length;
       }
     }
 
