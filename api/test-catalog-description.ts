@@ -4,8 +4,8 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin.js.js';
-import { getBolToken, getCatalogProduct } from './_lib/bol-api-client.js.js';
+import { createAdminClient } from './_lib/supabase-admin.js';
+import { getBolToken, getCatalogProduct } from './_lib/bol-api-client.js';
 
 const FASHIONPOWER_ID = 'a260ef86-9e3a-47cf-9e59-68bf8418e6d8';
 

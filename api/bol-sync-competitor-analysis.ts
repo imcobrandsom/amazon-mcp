@@ -14,7 +14,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin.js.js';
+import { createAdminClient } from './_lib/supabase-admin.js';
 import {
   getBolToken,
   getProductList,
@@ -24,11 +24,11 @@ import {
   extractDeepestCategoryId,
   extractCategoryPath,
   sleep,
-} from './_lib/bol-api-client.js.js';
+} from './_lib/bol-api-client.js';
 import {
   analyzeCompetitorContent,
   generateCategoryInsights,
-} from './_lib/bol-competitor-analysis.js.js';
+} from './_lib/bol-competitor-analysis.js';
 
 function isAuthorised(req: VercelRequest): boolean {
   const cronSecret    = process.env.CRON_SECRET;

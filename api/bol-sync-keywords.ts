@@ -6,8 +6,8 @@
  * Run N+1+: weekly update — vorige week ophalen voor alle backfilled keywords
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin.js.js';
-import { getBolToken, getSearchTerms, sleep } from './_lib/bol-api-client.js.js';
+import { createAdminClient } from './_lib/supabase-admin.js';
+import { getBolToken, getSearchTerms, sleep } from './_lib/bol-api-client.js';
 
 const BRAND_BLOCKLIST = new Set([
   'nike', 'adidas', 'puma', 'reebok', 'under armour', 'new balance',

@@ -3,8 +3,8 @@
  * Test endpoint voor Search Terms API debugging
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getBolToken, getSearchTerms } from './_lib/bol-api-client.js.js';
-import { createAdminClient } from './_lib/supabase-admin.js.js';
+import { getBolToken, getSearchTerms } from './_lib/bol-api-client.js';
+import { createAdminClient } from './_lib/supabase-admin.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).end();
