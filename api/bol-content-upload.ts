@@ -1,6 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createAdminClient } from './_lib/supabase-admin';
 import * as XLSX from 'xlsx';
+import formidable from 'formidable';
+import * as fs from 'fs';
 
 export const config = {
   api: {
@@ -16,47 +18,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const supabase = createAdminClient();
 
   try {
-    // Parse multipart form data manually
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      chunks.push(chunk);
-    }
-    const buffer = Buffer.concat(chunks);
+    // Parse multipart form data with formidable
+    const form = formidable({ multiples: false });
 
-    // Extract customerId and file from multipart data
-    const boundary = req.headers['content-type']?.split('boundary=')[1];
-    if (!boundary) {
-      return res.status(400).json({ error: 'Invalid multipart request' });
-    }
+    const { fields, files } = await new Promise<{
+      fields: formidable.Fields;
+      files: formidable.Files;
+    }>((resolve, reject) => {
+      form.parse(req as any, (err, fields, files) => {
+        if (err) reject(err);
+        else resolve({ fields, files });
+      });
+    });
 
-    const parts = buffer.toString('binary').split(`--${boundary}`);
-    let customerId: string | null = null;
-    let fileBuffer: Buffer | null = null;
-    let filename: string | null = null;
+    // Extract customerId
+    const customerId = Array.isArray(fields.customerId)
+      ? fields.customerId[0]
+      : fields.customerId;
 
-    for (const part of parts) {
-      if (part.includes('name="customerId"')) {
-        const match = part.split('\r\n\r\n')[1]?.split('\r\n')[0];
-        if (match) customerId = match;
-      } else if (part.includes('name="file"')) {
-        const filenameMatch = part.match(/filename="([^"]+)"/);
-        if (filenameMatch) filename = filenameMatch[1];
-
-        const dataStart = part.indexOf('\r\n\r\n') + 4;
-        const dataEnd = part.lastIndexOf('\r\n');
-        if (dataStart > 3 && dataEnd > dataStart) {
-          const binaryData = part.substring(dataStart, dataEnd);
-          fileBuffer = Buffer.from(binaryData, 'binary');
-        }
-      }
-    }
-
-    if (!customerId) {
+    if (!customerId || typeof customerId !== 'string') {
       return res.status(400).json({ error: 'customerId required' });
     }
-    if (!fileBuffer || !filename) {
+
+    // Extract file
+    const fileArray = Array.isArray(files.file) ? files.file : [files.file];
+    const file = fileArray[0];
+
+    if (!file) {
       return res.status(400).json({ error: 'file required' });
     }
+
+    // Read file buffer
+    const fileBuffer = fs.readFileSync(file.filepath);
+    const filename = file.originalFilename || 'unknown.xlsx';
 
     // Parse Excel
     const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
@@ -103,6 +97,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } else {
         uploaded++;
       }
+    }
+
+    // Cleanup temporary file
+    try {
+      fs.unlinkSync(file.filepath);
+    } catch (cleanupError) {
+      console.warn('Failed to cleanup temp file:', cleanupError);
     }
 
     return res.status(200).json({ uploaded, skipped, errors });
