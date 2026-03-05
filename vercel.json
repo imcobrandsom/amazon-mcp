@@ -34,5 +34,15 @@
       "path": "/api/bol-sync-keywords",
       "schedule": "0 7 * * 1"
     }
-  ]
+  ],
+  "functions": {
+    "api/bol-content-*.ts": {
+      "maxDuration": 30,
+      "memory": 1024
+    },
+    "api/test-content-tables.ts": {
+      "maxDuration": 10,
+      "memory": 512
+    }
+  }
 }
