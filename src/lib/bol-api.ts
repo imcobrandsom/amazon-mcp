@@ -16,6 +16,9 @@ import type {
   BolCompetitorCatalog,
   BolKeywordCategory,
   BolKeywordOverviewItem,
+  BolContentProposal,
+  BolContentTrend,
+  BolClientBrief,
 } from '../types/bol';
 import { supabase } from './supabase';
 
@@ -316,4 +319,80 @@ export async function triggerSync(
   const data = await res.json() as BolSyncResult;
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
+}
+
+// ── Content Generator API ─────────────────────────────────────────────────────
+
+export async function getBolContentProposals(customerId: string, ean?: string) {
+  const params = new URLSearchParams({ customerId });
+  if (ean) params.set('ean', ean);
+  const r = await fetch(`${BASE}/bol-content-proposals?${params}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function generateBolContent(customerId: string, eans: string[], triggerReason = 'manual') {
+  const r = await fetch(`${BASE}/bol-content-generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customerId, eans, trigger_reason: triggerReason }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function updateContentProposalStatus(proposalId: string, action: 'approve' | 'reject') {
+  const r = await fetch(`${BASE}/bol-content-proposals`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proposalId, action }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function pushContentToBol(proposalId: string) {
+  const r = await fetch(`${BASE}/bol-content-push`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proposalId }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function getClientBrief(customerId: string) {
+  const r = await fetch(`${BASE}/bol-client-brief?customerId=${customerId}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function saveClientBrief(customerId: string, brief_text: string) {
+  const r = await fetch(`${BASE}/bol-client-brief`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customerId, brief_text }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function getContentTrends(customerId: string) {
+  const r = await fetch(`${BASE}/bol-content-trends?customerId=${customerId}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+export async function uploadContentBase(customerId: string, file: File): Promise<{ uploaded: number; skipped: number; errors: string[] }> {
+  const formData = new FormData();
+  formData.append('customerId', customerId);
+  formData.append('file', file);
+
+  const r = await fetch(`${BASE}/bol-content-upload`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
 }

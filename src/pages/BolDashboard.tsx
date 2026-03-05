@@ -28,6 +28,7 @@ import {
   Download,
 } from 'lucide-react';
 import GlobalChatPanel from '../components/Chat/GlobalChatPanel';
+import ContentSection from '../components/Bol/ContentSection';
 import {
   getBolSummaryForClient,
   getBolCompetitorsForClient,
@@ -74,6 +75,7 @@ type NavSection =
   | 'overview'
   | 'recommendations'
   | 'products'
+  | 'content'
   | 'inventory'
   | 'orders'
   | 'campaigns'
@@ -2671,6 +2673,7 @@ const NAV_ITEMS: {
   { id: 'overview',        label: 'Health Scores',        icon: <LayoutDashboard size={14} /> },
   { id: 'recommendations', label: 'Recommendations',      icon: <Lightbulb size={14} /> },
   { id: 'products',        label: 'Products',             icon: <Package size={14} /> },
+  { id: 'content',         label: 'Content',              icon: <Sparkles size={14} /> },
   { id: 'inventory',       label: 'Inventory',            icon: <Layers size={14} /> },
   { id: 'orders',          label: 'Orders',               icon: <ShoppingCart size={14} /> },
   { id: 'campaigns',       label: 'Campaign Performance', icon: <BarChart3 size={14} /> },
@@ -2825,6 +2828,9 @@ export default function BolDashboard() {
               {activeSection === 'overview'        && <OverviewSection summary={summary} />}
               {activeSection === 'recommendations' && <RecommendationsSection summary={summary} />}
               {activeSection === 'products'        && <ProductsSection analysis={summary.content} bolCustomerId={bolCustomerId} />}
+              {activeSection === 'content'         && bolCustomerId && clientId && (
+                <ContentSection bolCustomerId={bolCustomerId} clientId={clientId} />
+              )}
               {activeSection === 'inventory'       && <InventorySection analysis={summary.inventory} />}
               {activeSection === 'orders'          && <OrdersSection analysis={summary.orders} />}
               {activeSection === 'campaigns'       && <CampaignSection analysis={summary.advertising} bolCustomerId={bolCustomerId} />}

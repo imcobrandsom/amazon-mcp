@@ -339,3 +339,89 @@ export interface BolCategoryInsights {
   content_quality_avg: number | null;
   generated_at: string;
 }
+
+// ── Content Generator ──────────────────────────────────────────────────────────
+
+export interface BolClientBrief {
+  id: string;
+  bol_customer_id: string;
+  brief_text: string;
+  updated_at: string;
+}
+
+export interface BolContentBase {
+  id: string;
+  bol_customer_id: string;
+  ean: string;
+  sku: string | null;
+  title: string | null;
+  description: string | null;
+  source_filename: string | null;
+  uploaded_at: string;
+  updated_at: string;
+}
+
+export type BolContentProposalStatus = 'pending' | 'approved' | 'pushed' | 'rejected';
+export type BolContentTriggerReason = 'quality_score' | 'keyword_trend' | 'manual';
+
+export interface BolContentDescriptionParts {
+  intro: string;
+  usps: string[];
+  long: string;
+}
+
+export interface BolContentChangesSummary {
+  title_changed: boolean;
+  keywords_added: string[];
+  keywords_removed: string[];
+  keywords_promoted_to_title: string[];
+  description_parts_changed: string[];
+  title_chars_before: number;
+  title_chars_after: number;
+  desc_chars_before: number;
+  desc_chars_after: number;
+}
+
+export interface BolContentProposal {
+  id: string;
+  bol_customer_id: string;
+  ean: string;
+  status: BolContentProposalStatus;
+  trigger_reason: BolContentTriggerReason;
+  current_title: string | null;
+  current_description: string | null;
+  proposed_title: string;
+  proposed_description: string;
+  proposed_description_parts: BolContentDescriptionParts | null;
+  score_before: number | null;
+  score_after_estimate: number | null;
+  changes_summary: BolContentChangesSummary;
+  generated_at: string;
+  approved_at: string | null;
+  pushed_at: string | null;
+  rejected_at: string | null;
+}
+
+export interface BolContentTrend {
+  id: string;
+  bol_customer_id: string;
+  trend_type: 'keyword_volume_spike' | 'new_top_keyword' | 'competitor_content_change';
+  keyword: string | null;
+  volume_change_pct: number | null;
+  affected_eans: string[];
+  is_acted_upon: boolean;
+  detected_at: string;
+  acted_upon_at: string | null;
+}
+
+// Enriched view: proposal + basis content availability + current product data
+export interface BolContentItem {
+  ean: string;
+  title: string | null;           // from bol_products (live)
+  description: string | null;     // from bol_products (live)
+  content_score: number | null;   // from bol_analyses category='content'
+  has_basis_content: boolean;
+  basis_content: BolContentBase | null;
+  latest_proposal: BolContentProposal | null;
+  proposal_history: BolContentProposal[];
+}
