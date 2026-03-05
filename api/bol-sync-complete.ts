@@ -13,15 +13,15 @@
  * Jobs that fail or exceed 24 hours are marked as failed.
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient }    from './_lib/supabase-admin.js';
+import { createAdminClient }    from './_lib/supabase-admin.js.js';
 import {
   getBolToken,
   checkProcessStatus,
   downloadOffersExport,
   getOfferInsights,
   sleep,
-} from './_lib/bol-api-client.js';
-import { analyzeContent, type OfferInsightsMap } from './_lib/bol-analysis.js';
+} from './_lib/bol-api-client.js.js';
+import { analyzeContent, type OfferInsightsMap } from './_lib/bol-analysis.js.js';
 
 const MAX_JOB_AGE_HOURS = 24;
 const MAX_ATTEMPTS      = 50; // 50 × 5 min = ~4 hours of polling

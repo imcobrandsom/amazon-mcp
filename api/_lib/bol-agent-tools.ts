@@ -8,7 +8,7 @@
  * FBB CSV exports are unreliable (missing titles/prices). Use time-series tables instead.
  */
 
-import { createAdminClient } from './supabase-admin.js';
+import { createAdminClient } from './supabase-admin.js.js';
 import type {
   BolCampaignPerformance,
   BolKeywordPerformance,

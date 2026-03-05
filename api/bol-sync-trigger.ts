@@ -11,7 +11,7 @@
  * syncType 'extended' → competitor offers + keyword ranks + catalog enrichment (top-50 EANs)
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin.js';
+import { createAdminClient } from './_lib/supabase-admin.js.js';
 import {
   getBolToken,
   getAdsToken,
@@ -35,7 +35,7 @@ import {
   getCatalogProduct,
   getSalesForecast,
   sleep,
-} from './_lib/bol-api-client.js';
+} from './_lib/bol-api-client.js.js';
 import {
   analyzeContent,
   analyzeInventory,
@@ -44,7 +44,7 @@ import {
   analyzeReturns,
   analyzePerformance,
   type OfferInsightsMap,
-} from './_lib/bol-analysis.js';
+} from './_lib/bol-analysis.js.js';
 
 // ── Auth helper ────────────────────────────────────────────────────────────────
 

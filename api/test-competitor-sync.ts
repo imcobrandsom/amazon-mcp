@@ -3,7 +3,7 @@
  * GET /api/test-competitor-sync
  */
 
-import { createAdminClient } from './_lib/supabase-admin';
+import { createAdminClient } from './_lib/supabase-admin.js';
 
 export default async function handler(req: Request) {
   const supabase = createAdminClient();

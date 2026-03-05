@@ -8,8 +8,8 @@
  * - Can take 5-10 minutes for large catalogs
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin.js';
-import { getBolToken, getCatalogProduct, sleep } from './_lib/bol-api-client.js';
+import { createAdminClient } from './_lib/supabase-admin.js.js';
+import { getBolToken, getCatalogProduct, sleep } from './_lib/bol-api-client.js.js';
 
 interface CatalogAttribute {
   id: string;

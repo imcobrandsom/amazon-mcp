@@ -4,7 +4,7 @@
  * Populated by the bol-sync-extended cron (runs every 6h).
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin.js';
+import { createAdminClient } from './_lib/supabase-admin.js.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });

@@ -11,7 +11,7 @@
  * picked up automatically by bol-sync-complete within 5 minutes.
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient }   from './_lib/supabase-admin.js';
+import { createAdminClient }   from './_lib/supabase-admin.js.js';
 import {
   getBolToken,
   getAdsToken,
@@ -24,14 +24,14 @@ import {
   getReturns,
   getPerformanceIndicator,
   sleep,
-} from './_lib/bol-api-client.js';
+} from './_lib/bol-api-client.js.js';
 import {
   analyzeInventory,
   analyzeOrders,
   analyzeAdvertising,
   analyzeReturns,
   analyzePerformance,
-} from './_lib/bol-analysis.js';
+} from './_lib/bol-analysis.js.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });

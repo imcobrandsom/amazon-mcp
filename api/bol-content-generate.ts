@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin';
-import { generateBolContent } from './_lib/bol-content';
+import { createAdminClient } from './_lib/supabase-admin.js';
+import { generateBolContent } from './_lib/bol-content.js';
 import type { BolContentTriggerReason } from '../src/types/bol';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

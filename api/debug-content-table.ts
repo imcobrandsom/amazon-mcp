@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin';
+import { createAdminClient } from './_lib/supabase-admin.js';
 
 // Test specific content table access
 export default async function handler(req: VercelRequest, res: VercelResponse) {

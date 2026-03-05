@@ -2,8 +2,8 @@
  * Test script voor Bol.com Search Terms API
  * Run: npx tsx api/test-search-terms.ts [keyword]
  */
-import { getBolToken, getSearchTerms } from './_lib/bol-api-client.js';
-import { createAdminClient } from './_lib/supabase-admin.js';
+import { getBolToken, getSearchTerms } from './_lib/bol-api-client.js.js';
+import { createAdminClient } from './_lib/supabase-admin.js.js';
 
 async function main() {
   const keyword = process.argv[2] || 'sportlegging';

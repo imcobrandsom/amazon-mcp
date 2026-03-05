@@ -11,7 +11,7 @@
  * Auth: same as bol-sync-start (CRON_SECRET or x-webhook-secret).
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin.js';
+import { createAdminClient } from './_lib/supabase-admin.js.js';
 import {
   getBolToken,
   getCompetingOffers,
@@ -20,7 +20,7 @@ import {
   getCatalogProduct,
   getSalesForecast,
   sleep,
-} from './_lib/bol-api-client.js';
+} from './_lib/bol-api-client.js.js';
 
 function isAuthorised(req: VercelRequest): boolean {
   const cronSecret    = process.env.CRON_SECRET;

@@ -5,7 +5,7 @@
  * Met keyword: wekelijkse volume-history voor dat specifieke keyword
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin.js';
+import { createAdminClient } from './_lib/supabase-admin.js.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).end();

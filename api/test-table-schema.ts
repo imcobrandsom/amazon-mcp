@@ -4,7 +4,7 @@
  */
 
 import type { VercelRequest, VercelResponse} from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin.js';
+import { createAdminClient } from './_lib/supabase-admin.js.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const supabase = createAdminClient();

@@ -3,7 +3,7 @@
  * Returns a per-product list by joining the latest inventory + listings raw snapshots on EAN.
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createAdminClient } from './_lib/supabase-admin.js';
+import { createAdminClient } from './_lib/supabase-admin.js.js';
 
 interface InvItem {
   ean: string;
