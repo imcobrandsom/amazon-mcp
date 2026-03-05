@@ -98,6 +98,11 @@ export default function ContentSection({
   const [showUploadInput, setShowUploadInput] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Upload progress state
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const uploadAbortRef = useRef<boolean>(false);
+
   useEffect(() => {
     setPage(0);
   }, [search, filter, sortKey, sortDir, pageSize]);
@@ -129,15 +134,54 @@ export default function ContentSection({
 
   async function handleUpload(file: File | null) {
     if (!file) return;
+
+    setUploading(true);
+    setUploadProgress(0);
+    uploadAbortRef.current = false;
+
     try {
+      // Simulate progress while uploading
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => {
+          if (uploadAbortRef.current) return prev;
+          if (prev >= 90) return prev; // Cap at 90% until complete
+          return prev + 10;
+        });
+      }, 200);
+
       const result = await uploadContentBase(bolCustomerId, file);
-      alert(`Upload geslaagd: ${result.uploaded} producten geüpload`);
-      await loadData();
-      setShowUploadInput(false);
+
+      clearInterval(progressInterval);
+
+      if (!uploadAbortRef.current) {
+        setUploadProgress(100);
+        alert(`Upload geslaagd: ${result.uploaded} producten geüpload`);
+        await loadData();
+        setShowUploadInput(false);
+
+        // Reset after a delay
+        setTimeout(() => {
+          if (!uploadAbortRef.current) {
+            setUploading(false);
+            setUploadProgress(0);
+          }
+        }, 1000);
+      }
     } catch (error: any) {
-      alert(`Upload mislukt: ${error.message}`);
+      if (!uploadAbortRef.current) {
+        alert(`Upload mislukt: ${error.message}`);
+        setUploading(false);
+        setUploadProgress(0);
+      }
     }
   }
+
+  // Clean up on unmount - but don't abort the upload
+  useEffect(() => {
+    return () => {
+      uploadAbortRef.current = true;
+    };
+  }, []);
 
   async function handleSaveBrief(text: string) {
     try {
@@ -268,6 +312,32 @@ export default function ContentSection({
 
   return (
     <div className="space-y-4">
+      {/* Upload progress bar */}
+      {uploading && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Upload size={16} className="text-blue-600 animate-pulse" />
+              <span className="text-sm font-medium text-blue-900">
+                Basis content uploaden...
+              </span>
+            </div>
+            <span className="text-sm font-semibold text-blue-700">
+              {uploadProgress}%
+            </span>
+          </div>
+          <div className="w-full bg-blue-100 rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-blue-600 h-full transition-all duration-300 ease-out"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+          <p className="text-xs text-blue-600 mt-2">
+            De upload blijft doorlopen als je naar een andere pagina navigeert
+          </p>
+        </div>
+      )}
+
       {/* Trend notifications */}
       {trends.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
@@ -301,10 +371,16 @@ export default function ContentSection({
       <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          disabled={uploading}
+          className={clsx(
+            "flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors",
+            uploading
+              ? "bg-blue-300 text-white cursor-not-allowed"
+              : "bg-blue-600 text-white hover:bg-blue-700"
+          )}
         >
-          <Upload size={16} />
-          Upload basiscontent Excel
+          <Upload size={16} className={uploading ? "animate-pulse" : ""} />
+          {uploading ? "Uploaden..." : "Upload basiscontent Excel"}
         </button>
         <input
           ref={fileInputRef}
