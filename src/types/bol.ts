@@ -75,6 +75,8 @@ export interface BolProduct {
   stockAmount: number | null;
   onHold: boolean;
   eol: boolean;  // End of Life flag (manual)
+  category: string | null;    // Leaf category name from bol_product_categories
+  advertised: boolean;        // Whether EAN appears in any active ad group product targets
   catalogAttributes: BolCatalogAttributes | null;  // Full catalog metadata
 }
 
@@ -425,4 +427,97 @@ export interface BolContentItem {
   basis_content: BolContentBase | null;
   latest_proposal: BolContentProposal | null;
   proposal_history: BolContentProposal[];
+}
+
+// ── Content Intelligence (Phase 1) ─────────────────────────────────────────
+
+export interface BolProductKeywordTarget {
+  id: string;
+  bol_customer_id: string;
+  ean: string;
+  keyword: string;
+  priority: number;  // 1-10, 10 = highest
+  source: 'category_analysis' | 'competitor_intel' | 'advertising' | 'manual';
+  search_volume: number | null;
+  current_organic_rank: number | null;
+  target_rank: number;
+  in_title: boolean;
+  in_description: boolean;
+  keyword_density_pct: number | null;
+  impressions_last_30d: number | null;
+  clicks_last_30d: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BolCategoryAttributeRequirements {
+  id: string;
+  bol_customer_id: string;
+  category_slug: string;
+  category_name: string | null;
+  required_attributes: string[];
+  recommended_attributes: string[];
+  scoring_weights: Record<string, number>;  // e.g., { "Colour": 15, "Size Clothing": 20 }
+  title_min_length: number;
+  title_max_length: number;
+  description_min_length: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BolCustomerSettings {
+  id: string;
+  bol_customer_id: string;
+  autonomy_level: 'manual' | 'semi-auto' | 'auto';
+  auto_approve_minor_edits: boolean;
+  max_title_length: number;
+  min_description_length: number;
+  min_keyword_volume_threshold: number;
+  max_keywords_per_product: number;
+  min_stock_for_content_work: number;
+  image_enrichment_enabled: boolean;
+  image_enrichment_webhook_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BolProductCompleteness {
+  ean: string;
+  category_slug: string | null;
+  required_filled: number;
+  required_total: number;
+  required_completeness_pct: number | null;
+  recommended_filled: number;
+  recommended_total: number;
+  title_length: number;
+  title_min_length: number;
+  title_meets_min: boolean;
+  description_length: number;
+  description_min_length: number;
+  description_meets_min: boolean;
+  overall_completeness_score: number | null;
+}
+
+export interface BolProductPriorityQueueItem {
+  ean: string;
+  bol_customer_id: string;
+  title: string | null;
+  completeness_score: number | null;
+  top_missing_keyword_volume: number;
+  high_priority_keywords_missing: number;
+  current_stock: number;
+  priority_score: number;
+  action_reasons: string[];
+}
+
+export interface BolProductAnalysisResponse {
+  completeness: BolProductCompleteness | null;
+  keywords: BolProductKeywordTarget[];
+  competitor: BolCompetitorSnapshot | null;
+  product: {
+    ean: string;
+    title: string | null;
+    description: string | null;
+    catalogAttributes: BolCatalogAttributes | null;
+  };
 }

@@ -1,234 +1,221 @@
+/**
+ * POST /api/bol-content-generate
+ * Generates optimized content proposal for a product using Claude AI
+ * Phase 2: Updated to use bol_product_keyword_targets and new prompt system
+ */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createAdminClient } from './_lib/supabase-admin.js';
-import { generateBolContent } from './_lib/bol-content.js';
-import type { BolContentTriggerReason } from '../src/types/bol';
+import {
+  buildContentOptimizationPrompt,
+  parseClaudeResponse,
+  calculateChangesSummary,
+  type ContentGenerationContext,
+} from './_lib/bol-content-prompts.js';
+import Anthropic from '@anthropic-ai/sdk';
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
-  const { customerId, eans, trigger_reason } = req.body as {
-    customerId: string;
-    eans: string[];
-    trigger_reason?: BolContentTriggerReason;
-  };
+  const { customerId, ean, triggerReason = 'manual' } = req.body;
 
-  if (!customerId || !Array.isArray(eans) || eans.length === 0) {
-    return res.status(400).json({ error: 'customerId and eans[] required' });
+  if (!customerId || !ean) {
+    return res.status(400).json({ error: 'customerId and ean required' });
   }
 
   const supabase = createAdminClient();
-  const triggerReason = trigger_reason ?? 'manual';
-  const generated: string[] = [];
-  const skipped: Array<{ ean: string; reason: string }> = [];
 
   try {
-    // Fetch client brief
+    // Step 1: Fetch product data
+    const { data: productSnap } = await supabase
+      .from('bol_raw_snapshots')
+      .select('catalog_attributes')
+      .eq('bol_customer_id', customerId)
+      .eq('data_type', 'catalog')
+      .eq('raw_data->>ean', ean)
+      .order('fetched_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!productSnap?.catalog_attributes) {
+      return res.status(404).json({ error: 'Product not found or no catalog data available' });
+    }
+
+    const catalogAttrs = productSnap.catalog_attributes as any;
+
+    // Step 2: Fetch product category
+    const { data: categoryData } = await supabase
+      .from('bol_product_categories')
+      .select('category_slug, category_path')
+      .eq('bol_customer_id', customerId)
+      .eq('ean', ean)
+      .single();
+
+    const categorySlug = categoryData?.category_slug || null;
+    const categoryName = categoryData?.category_path?.split(' > ').pop() || null;
+
+    // Step 3: Fetch target keywords
+    const { data: keywords } = await supabase
+      .from('bol_product_keyword_targets')
+      .select('*')
+      .eq('bol_customer_id', customerId)
+      .eq('ean', ean)
+      .order('priority', { ascending: false });
+
+    if (!keywords || keywords.length === 0) {
+      return res.status(400).json({
+        error: 'No target keywords found for this product',
+        hint: 'Run /api/bol-keywords-populate first to add keywords'
+      });
+    }
+
+    // Step 4: Fetch category requirements
+    const { data: categoryReqs } = categorySlug
+      ? await supabase
+          .from('bol_category_attribute_requirements')
+          .select('*')
+          .eq('bol_customer_id', customerId)
+          .eq('category_slug', categorySlug)
+          .single()
+      : { data: null };
+
+    // Step 5: Fetch completeness data
+    const { data: completenessData } = await supabase.rpc('get_product_completeness', {
+      p_customer_id: customerId,
+      p_ean: ean,
+    });
+
+    const completeness = completenessData?.[0] || null;
+
+    // Step 6: Fetch client brief
     const { data: briefData } = await supabase
       .from('bol_client_brief')
       .select('brief_text')
       .eq('bol_customer_id', customerId)
-      .maybeSingle();
+      .single();
 
-    const clientBrief = briefData?.brief_text ?? '';
+    // Step 7: Fetch competitor (optional)
+    const { data: competitorData } = await supabase
+      .from('bol_competitor_catalog')
+      .select('*')
+      .eq('bol_customer_id', customerId)
+      .eq('category_slug', categorySlug || '')
+      .order('relevance_score', { ascending: false })
+      .limit(1)
+      .single();
 
-    for (const ean of eans) {
-      try {
-        // Check for recent non-rejected proposal (last 30 days)
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    // Step 8: Build prompt context
+    const context: ContentGenerationContext = {
+      product: {
+        ean,
+        title: catalogAttrs.Title || null,
+        description: catalogAttrs.Description || null,
+        category: categoryName,
+        price: null, // TODO: fetch from listings if needed
+        catalogAttributes: catalogAttrs,
+      },
+      keywords: keywords as any[],
+      categoryRequirements: categoryReqs as any,
+      clientBrief: briefData?.brief_text || null,
+      competitor: competitorData || null,
+      currentCompleteness: completeness,
+    };
 
-        const { data: existingProposal } = await supabase
-          .from('bol_content_proposals')
-          .select('id')
-          .eq('bol_customer_id', customerId)
-          .eq('ean', ean)
-          .neq('status', 'rejected')
-          .gte('generated_at', thirtyDaysAgo.toISOString())
-          .maybeSingle();
+    const prompt = buildContentOptimizationPrompt(context);
 
-        if (existingProposal) {
-          skipped.push({ ean, reason: 'recent_proposal_exists' });
-          continue;
-        }
+    console.log('Calling Claude API for content generation...');
 
-        // Fetch basis content
-        const { data: basisContent } = await supabase
-          .from('bol_content_base')
-          .select('*')
-          .eq('bol_customer_id', customerId)
-          .eq('ean', ean)
-          .maybeSingle();
+    // Step 9: Call Claude API
+    const message = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2000,
+      temperature: 0.7,
+      messages: [
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+    });
 
-        if (!basisContent) {
-          skipped.push({ ean, reason: 'no_basis_content' });
-          continue;
-        }
+    const rawResponse = message.content[0].type === 'text' ? message.content[0].text : '';
 
-        // Fetch current content from latest inventory snapshot
-        const { data: inventorySnap } = await supabase
-          .from('bol_raw_snapshots')
-          .select('data')
-          .eq('bol_customer_id', customerId)
-          .eq('data_type', 'inventory')
-          .order('fetched_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+    console.log('Claude response received:', rawResponse.substring(0, 200) + '...');
 
-        let currentTitle: string | null = null;
-        let currentDescription: string | null = null;
+    // Step 10: Parse Claude response
+    const parsed = parseClaudeResponse(rawResponse);
 
-        if (inventorySnap?.data && Array.isArray(inventorySnap.data)) {
-          const product = inventorySnap.data.find((p: any) => p.ean === ean);
-          if (product) {
-            currentTitle = product.title ?? null;
-            currentDescription = product.description ?? null;
-          }
-        }
-
-        // Fetch content score from latest analysis
-        const { data: analysisData } = await supabase
-          .from('bol_analyses')
-          .select('score')
-          .eq('bol_customer_id', customerId)
-          .eq('category', 'content')
-          .order('analyzed_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        const scoreBefore = analysisData?.score ?? null;
-
-        // Fetch top keywords from search volume data (latest week, top 15 by volume)
-        const { data: keywordData } = await supabase
-          .from('bol_keyword_search_volume')
-          .select('keyword, search_volume')
-          .eq('bol_customer_id', customerId)
-          .order('week_of', { ascending: false })
-          .order('search_volume', { ascending: false })
-          .limit(15);
-
-        const topKeywords = (keywordData ?? []).map(k => k.keyword);
-        const keywordVolumes: Record<string, number> = {};
-        (keywordData ?? []).forEach(k => {
-          keywordVolumes[k.keyword] = k.search_volume;
-        });
-
-        // Fetch trending keywords (volume increased in last 2 weeks)
-        const twoWeeksAgo = new Date();
-        twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
-
-        const { data: trendingData } = await supabase
-          .from('bol_keyword_search_volume')
-          .select('keyword')
-          .eq('bol_customer_id', customerId)
-          .gte('week_of', twoWeeksAgo.toISOString())
-          .order('search_volume', { ascending: false })
-          .limit(10);
-
-        const trendingKeywords = (trendingData ?? []).map(k => k.keyword);
-
-        // Fetch category for this product
-        const { data: categoryData } = await supabase
-          .from('bol_product_category')
-          .select('category_slug')
-          .eq('bol_customer_id', customerId)
-          .eq('ean', ean)
-          .maybeSingle();
-
-        const categorySlug = categoryData?.category_slug;
-
-        // Fetch competitor titles and USPs from same category
-        let competitorTitles: string[] = [];
-        let competitorUsps: string[] = [];
-
-        if (categorySlug) {
-          const { data: competitorCatalog } = await supabase
-            .from('bol_competitor_catalog')
-            .select('title')
-            .eq('bol_customer_id', customerId)
-            .eq('category_slug', categorySlug)
-            .not('title', 'is', null)
-            .limit(10);
-
-          competitorTitles = (competitorCatalog ?? [])
-            .map(c => c.title)
-            .filter((t): t is string => !!t);
-
-          const { data: competitorAnalysis } = await supabase
-            .from('bol_competitor_content_analysis')
-            .select('extracted_usps')
-            .eq('bol_customer_id', customerId)
-            .eq('category_slug', categorySlug)
-            .not('extracted_usps', 'is', null)
-            .limit(10);
-
-          const allUsps = (competitorAnalysis ?? [])
-            .flatMap(c => c.extracted_usps ?? []);
-          competitorUsps = [...new Set(allUsps)].slice(0, 15);
-        }
-
-        // Generate content
-        const result = await generateBolContent({
-          ean,
-          currentTitle,
-          currentDescription,
-          basisTitle: basisContent.title,
-          basisDescription: basisContent.description,
-          clientBrief,
-          topKeywords,
-          trendingKeywords,
-          competitorTitles,
-          competitorUsps,
-          keywordVolumes,
-        });
-
-        // Insert proposal
-        const { error: insertError } = await supabase
-          .from('bol_content_proposals')
-          .insert({
-            bol_customer_id: customerId,
-            ean,
-            status: 'pending',
-            trigger_reason: triggerReason,
-            current_title: currentTitle,
-            current_description: currentDescription,
-            proposed_title: result.proposed_title,
-            proposed_description: result.proposed_description,
-            proposed_description_parts: result.proposed_description_parts,
-            score_before: scoreBefore,
-            score_after_estimate: result.score_after_estimate,
-            changes_summary: result.changes_summary,
-          });
-
-        if (insertError) {
-          skipped.push({ ean, reason: `insert_failed: ${insertError.message}` });
-          continue;
-        }
-
-        generated.push(ean);
-
-        // If triggered by keyword trend, mark related trends as acted upon
-        if (triggerReason === 'keyword_trend') {
-          await supabase
-            .from('bol_content_trends')
-            .update({
-              is_acted_upon: true,
-              acted_upon_at: new Date().toISOString(),
-            })
-            .eq('bol_customer_id', customerId)
-            .contains('affected_eans', [ean])
-            .eq('is_acted_upon', false);
-        }
-      } catch (error: any) {
-        console.error(`Generation failed for EAN ${ean}:`, error);
-        skipped.push({ ean, reason: `error: ${error.message}` });
-      }
+    if (!parsed) {
+      return res.status(500).json({
+        error: 'Failed to parse Claude response',
+        raw: rawResponse,
+      });
     }
 
-    return res.status(200).json({ generated, skipped });
-  } catch (error: any) {
+    // Step 11: Calculate changes summary
+    const changesSummary = calculateChangesSummary(
+      context.product.title,
+      context.product.description,
+      parsed.title,
+      parsed.description,
+      parsed.keywords_used,
+      context.keywords as any[]
+    );
+
+    // Step 12: Estimate score improvement (rough heuristic)
+    const currentScore = completeness?.overall_completeness_score || 0;
+    const scoreImprovement = Math.min(20, changesSummary.keywords_added.length * 5); // +5% per keyword, max +20%
+    const estimatedScore = Math.min(100, currentScore + scoreImprovement);
+
+    // Step 13: Save proposal to database
+    const { data: proposal, error: insertErr } = await supabase
+      .from('bol_content_proposals')
+      .insert({
+        bol_customer_id: customerId,
+        ean,
+        status: 'pending',
+        trigger_reason: triggerReason,
+        current_title: context.product.title,
+        current_description: context.product.description,
+        proposed_title: parsed.title,
+        proposed_description: parsed.description,
+        proposed_description_parts: parsed.description_parts,
+        score_before: currentScore,
+        score_after_estimate: estimatedScore,
+        changes_summary: changesSummary,
+      })
+      .select()
+      .single();
+
+    if (insertErr) {
+      console.error('Failed to save proposal:', insertErr);
+      return res.status(500).json({ error: 'Failed to save proposal', details: insertErr.message });
+    }
+
+    return res.status(200).json({
+      message: 'Content proposal generated successfully',
+      proposal_id: proposal.id,
+      proposal: {
+        ...proposal,
+        reasoning: parsed.reasoning,
+      },
+      changes_summary: changesSummary,
+      estimated_improvement: {
+        score_before: currentScore,
+        score_after: estimatedScore,
+        keywords_added: changesSummary.keywords_added.length,
+        search_volume_added: changesSummary.search_volume_added,
+      },
+    });
+
+  } catch (error) {
     console.error('Content generation error:', error);
-    return res.status(500).json({ error: error.message ?? 'Generation failed' });
+    return res.status(500).json({
+      error: 'Content generation failed',
+      details: (error as Error).message,
+    });
   }
 }

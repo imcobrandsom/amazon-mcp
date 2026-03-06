@@ -19,6 +19,10 @@ import type {
   BolContentProposal,
   BolContentTrend,
   BolClientBrief,
+  BolProductAnalysisResponse,
+  BolProductKeywordTarget,
+  BolCustomerSettings,
+  BolProductPriorityQueueItem,
 } from '../types/bol';
 import { supabase } from './supabase';
 
@@ -331,34 +335,63 @@ export async function getBolContentProposals(customerId: string, ean?: string) {
   return r.json();
 }
 
-export async function generateBolContent(customerId: string, eans: string[], triggerReason = 'manual') {
-  const r = await fetch(`${BASE}/bol-content-generate`, {
+export async function generateBolContent(
+  customerId: string,
+  ean: string,
+  triggerReason: 'manual' | 'quality_score' | 'keyword_trend' = 'manual'
+): Promise<{
+  proposal: BolContentProposal;
+  reasoning: string;
+  estimated_improvement_pct: number;
+}> {
+  return apiFetch('/bol-content-generate', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ customerId, eans, trigger_reason: triggerReason }),
+    body: JSON.stringify({ customerId, ean, trigger_reason: triggerReason }),
   });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
 }
 
-export async function updateContentProposalStatus(proposalId: string, action: 'approve' | 'reject') {
-  const r = await fetch(`${BASE}/bol-content-proposals`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ proposalId, action }),
+export async function approveContentProposal(
+  proposalId: string,
+  customerId: string
+): Promise<{
+  message: string;
+  proposal: BolContentProposal;
+  auto_pushed: boolean;
+}> {
+  return apiFetch('/bol-content-approve', {
+    method: 'POST',
+    body: JSON.stringify({ proposalId, customerId }),
   });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
 }
 
-export async function pushContentToBol(proposalId: string) {
-  const r = await fetch(`${BASE}/bol-content-push`, {
+export async function rejectContentProposal(
+  proposalId: string,
+  customerId: string,
+  reason?: string
+): Promise<{
+  message: string;
+  proposal: BolContentProposal;
+}> {
+  return apiFetch('/bol-content-reject', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ proposalId }),
+    body: JSON.stringify({ proposalId, customerId, reason }),
   });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
+}
+
+export async function pushContentToBol(
+  proposalId: string,
+  customerId: string
+): Promise<{
+  message: string;
+  proposal_id: string;
+  ean: string;
+  offer_id: string;
+  snapshot_created: boolean;
+}> {
+  return apiFetch('/bol-content-push', {
+    method: 'POST',
+    body: JSON.stringify({ proposalId, customerId }),
+  });
 }
 
 export async function getClientBrief(customerId: string) {
@@ -409,4 +442,78 @@ export async function uploadContentBase(customerId: string, file: File): Promise
 
   if (!r.ok) throw new Error(await r.text());
   return r.json();
+}
+
+// ── Content Intelligence (Phase 1) ────────────────────────────────────────
+
+export async function getBolProductAnalysis(
+  customerId: string,
+  ean: string
+): Promise<BolProductAnalysisResponse> {
+  return apiFetch(`/bol-product-analysis?customerId=${customerId}&ean=${encodeURIComponent(ean)}`);
+}
+
+export async function populateKeywordsFromAds(customerId: string): Promise<{
+  message: string;
+  campaigns_processed: number;
+  ad_groups_processed: number;
+  keywords_found: number;
+  keyword_product_mappings: number;
+  unique_keywords_inserted: number;
+  note: string;
+}> {
+  return apiFetch(`/bol-keywords-populate`, {
+    method: 'POST',
+    body: JSON.stringify({ customerId }),
+  });
+}
+
+export async function triggerKeywordSync(customerId: string): Promise<{
+  message: string;
+  total: number;
+  updated: number;
+  errors: number;
+}> {
+  return apiFetch(`/bol-keyword-sync`, {
+    method: 'POST',
+    body: JSON.stringify({ customerId }),
+  });
+}
+
+export async function getCustomerSettings(customerId: string): Promise<BolCustomerSettings | null> {
+  const { data } = await supabase
+    .from('bol_customer_settings')
+    .select('*')
+    .eq('bol_customer_id', customerId)
+    .single();
+  return data;
+}
+
+export async function updateCustomerSettings(
+  customerId: string,
+  settings: Partial<BolCustomerSettings>
+): Promise<void> {
+  const { error } = await supabase
+    .from('bol_customer_settings')
+    .upsert({
+      bol_customer_id: customerId,
+      ...settings,
+      updated_at: new Date().toISOString(),
+    });
+
+  if (error) throw error;
+}
+
+export async function getPriorityQueue(
+  customerId: string
+): Promise<{ products: BolProductPriorityQueueItem[] }> {
+  const { data, error } = await supabase
+    .from('bol_product_priority_queue')
+    .select('*')
+    .eq('bol_customer_id', customerId)
+    .order('priority_score', { ascending: false })
+    .limit(50);
+
+  if (error) throw error;
+  return { products: data ?? [] };
 }

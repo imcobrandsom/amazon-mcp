@@ -22,6 +22,7 @@ import {
   getOrders,
   getAdsCampaigns,
   getAdsAdGroups,
+  getAdsProductTargets,
   getAdsPerformance,
   getAdsCampaignPerformance,
   getAdsKeywords,
@@ -193,6 +194,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
           }
 
+          // Fetch product targets (advertised EANs) per ad group
+          const advertisedEans = new Set<string>();
+          for (const adGroup of (allAdGroups as Array<{ adGroupId?: string }>).slice(0, 40)) {
+            if (adGroup.adGroupId) {
+              const eans = await getAdsProductTargets(adsToken, adGroup.adGroupId);
+              for (const ean of eans) advertisedEans.add(ean);
+              await sleep(100);
+            }
+          }
+
           const campaignIds = (campaigns as Array<{ campaignId?: string }>)
             .filter(c => c.campaignId).map(c => c.campaignId as string);
           const keywordIds = allKeywords.filter(k => k.keywordId).map(k => k.keywordId as string);
@@ -339,7 +350,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const { data: snap } = await supabase.from('bol_raw_snapshots').insert({
             bol_customer_id: customer.id,
             data_type:       'advertising',
-            raw_data:        { campaigns, adGroups: allAdGroups, performance: perf },
+            raw_data:        { campaigns, adGroups: allAdGroups, performance: perf, advertisedEans: Array.from(advertisedEans) },
             record_count:    campaigns.length,
             quality_score:   1.0,
           }).select('id').single();

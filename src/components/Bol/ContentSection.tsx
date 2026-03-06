@@ -15,7 +15,8 @@ import {
 import {
   getBolContentProposals,
   generateBolContent,
-  updateContentProposalStatus,
+  approveContentProposal,
+  rejectContentProposal,
   pushContentToBol,
   getClientBrief,
   saveClientBrief,
@@ -200,8 +201,11 @@ export default function ContentSection({
     setGenerating(newGenerating);
 
     try {
-      const result = await generateBolContent(bolCustomerId, eans, triggerReason);
-      alert(`Gegenereerd: ${result.generated.length} producten\nOvergeslagen: ${result.skipped.length}`);
+      // Generate content for each EAN individually (new API only accepts one EAN at a time)
+      for (const ean of eans) {
+        await generateBolContent(bolCustomerId, ean, triggerReason);
+      }
+      alert(`Content gegenereerd voor ${eans.length} product(en)`);
       await loadData();
     } catch (error: any) {
       alert(`Genereren mislukt: ${error.message}`);
@@ -214,7 +218,7 @@ export default function ContentSection({
 
   async function handleApprove(proposalId: string) {
     try {
-      await updateContentProposalStatus(proposalId, 'approve');
+      await approveContentProposal(proposalId, bolCustomerId);
       await loadData();
       if (drawerProposal?.id === proposalId) {
         const updated = proposals.find(p => p.id === proposalId);
@@ -227,7 +231,7 @@ export default function ContentSection({
 
   async function handleReject(proposalId: string) {
     try {
-      await updateContentProposalStatus(proposalId, 'reject');
+      await rejectContentProposal(proposalId, bolCustomerId);
       await loadData();
       setDrawerProposal(null);
     } catch (error: any) {
@@ -237,7 +241,7 @@ export default function ContentSection({
 
   async function handlePush(proposalId: string) {
     try {
-      const result = await pushContentToBol(proposalId);
+      const result = await pushContentToBol(proposalId, bolCustomerId);
       alert(result.message);
       await loadData();
     } catch (error: any) {

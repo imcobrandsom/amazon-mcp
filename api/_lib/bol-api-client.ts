@@ -619,6 +619,30 @@ export async function getAdsAdGroups(adsToken: string, campaignId: string): Prom
   return d.adGroups ?? [];
 }
 
+/** Fetch all product targets (EANs) for a single ad group (paginated POST) */
+export async function getAdsProductTargets(adsToken: string, adGroupId: string): Promise<string[]> {
+  const eans: string[] = [];
+  let page = 1;
+
+  while (true) {
+    const res = await adsFetch(
+      adsToken,
+      '/advertiser/sponsored-products/campaign-management/product-targets/list',
+      { method: 'POST', body: JSON.stringify({ page, pageSize: 50, filter: { adGroupIds: [adGroupId] } }) }
+    );
+    if (!res.ok) break;
+    const d = res.data as { productTargets?: Array<{ ean?: string }> };
+    const items = d.productTargets ?? [];
+    for (const item of items) {
+      if (item.ean) eans.push(item.ean);
+    }
+    if (items.length < 50) break;
+    page++;
+  }
+
+  return eans;
+}
+
 /** Fetch advertiser-level performance for a date range (ISO dates: yyyy-MM-dd) */
 export async function getAdsPerformance(
   adsToken: string,

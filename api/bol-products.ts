@@ -33,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const supabase = createAdminClient();
 
-  const [invResult, allListResults, metadataResult, catalogResult] = await Promise.all([
+  const [invResult, allListResults, metadataResult, catalogResult, categoryResult, adsResult] = await Promise.all([
     supabase
       .from('bol_raw_snapshots')
       .select('raw_data')
@@ -61,6 +61,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .eq('bol_customer_id', customerId)
       .eq('data_type', 'catalog')
       .order('fetched_at', { ascending: false }),
+    // Fetch category per EAN from bol_product_categories
+    supabase
+      .from('bol_product_categories')
+      .select('ean, category_path, category_slug')
+      .eq('bol_customer_id', customerId),
+    // Fetch latest advertising snapshot for advertised EANs
+    supabase
+      .from('bol_raw_snapshots')
+      .select('raw_data')
+      .eq('bol_customer_id', customerId)
+      .eq('data_type', 'advertising')
+      .order('fetched_at', { ascending: false })
+      .limit(1)
+      .single(),
   ]);
 
   // Find the newest snapshot with 'offers' array (CSV export format)
@@ -86,6 +100,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const ean = rawData.ean as string;
       return [ean, snap.catalog_attributes];
     })
+  );
+
+  // Index category by EAN: prefer leaf of category_path, fallback to category_slug
+  const categoryByEan = new Map(
+    (categoryResult.data ?? []).map(row => {
+      const leaf = row.category_path
+        ? row.category_path.split(' > ').pop() ?? row.category_slug
+        : row.category_slug;
+      return [row.ean, leaf as string];
+    })
+  );
+
+  // Build advertised EANs set from latest advertising snapshot
+  const adsRaw = adsResult.data?.raw_data as Record<string, unknown> | undefined;
+  const advertisedEans = new Set<string>(
+    Array.isArray(adsRaw?.advertisedEans) ? (adsRaw.advertisedEans as string[]) : []
   );
 
   // Deduplicate by EAN: keep first occurrence of each EAN
@@ -114,6 +144,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         stockAmount:    offer?.stockAmount ? parseInt(offer.stockAmount, 10) : null,
         onHold:         offer?.onHoldByRetailer === 'true',
         eol:            metadataByEan.get(item.ean) ?? false,
+        category:       categoryByEan.get(item.ean) ?? null,
+        advertised:     advertisedEans.has(item.ean),
         catalogAttributes: catalog ?? null,  // Include all catalog attributes
       };
     })

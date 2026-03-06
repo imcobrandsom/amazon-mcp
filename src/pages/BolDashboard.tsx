@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import GlobalChatPanel from '../components/Chat/GlobalChatPanel';
 import ContentSection from '../components/Bol/ContentSection';
+import { ProductDetailModal } from '../components/Bol/ProductDetailModal';
 import {
   getBolSummaryForClient,
   getBolCompetitorsForClient,
@@ -41,6 +42,8 @@ import {
   getBolCategoryInsights,
   triggerSync,
   listBolCustomers,
+  getBolProductAnalysis,
+  getPriorityQueue,
   type BolSyncType,
 } from '../lib/bol-api';
 import type {
@@ -219,6 +222,17 @@ function StatTile({
 // ── Overview Section ───────────────────────────────────────────────────────────
 
 function OverviewSection({ summary }: { summary: BolCustomerAnalysisSummary }) {
+  const [priorityQueue, setPriorityQueue] = useState<any[]>([]);
+  const [queueLoading, setQueueLoading] = useState(false);
+
+  useEffect(() => {
+    if (!summary.customer.id) return;
+    setQueueLoading(true);
+    getPriorityQueue(summary.customer.id)
+      .then((r: { products: any[] }) => setPriorityQueue(r.products.slice(0, 5))) // Top 5
+      .catch((err: Error) => console.error('Failed to load priority queue:', err))
+      .finally(() => setQueueLoading(false));
+  }, [summary.customer.id]);
   const categories = [
     { label: 'Content Quality',   analysis: summary.content,     description: 'Title completeness, pricing & keyword compliance' },
     { label: 'Inventory Health',  analysis: summary.inventory,   description: 'Stock levels and fulfilment model' },
@@ -329,6 +343,73 @@ function OverviewSection({ summary }: { summary: BolCustomerAnalysisSummary }) {
           </div>
         </div>
       )}
+
+      {/* Priority Queue - AI Content Optimization Candidates */}
+      {!queueLoading && priorityQueue.length > 0 && (
+        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-blue-100 bg-white/50">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                  <Sparkles size={14} className="text-blue-600" />
+                  AI Content Optimization Queue
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">Top products ranked by business impact + keyword opportunity</p>
+              </div>
+              <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full">
+                Top 5
+              </span>
+            </div>
+          </div>
+          <div className="divide-y divide-blue-100">
+            {priorityQueue.map((item, idx) => (
+              <div key={item.ean} className="px-4 py-3 hover:bg-white/30 transition-colors">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">
+                      {idx + 1}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-900 truncate" title={item.title}>
+                        {item.title || item.ean}
+                      </p>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className="text-xs text-slate-500">EAN: {item.ean}</span>
+                        <span className="text-xs text-slate-500">Stock: {item.current_stock}</span>
+                        <span className={clsx('text-xs font-semibold',
+                          item.completeness_score >= 80 ? 'text-green-600' :
+                          item.completeness_score >= 60 ? 'text-amber-600' : 'text-red-600'
+                        )}>
+                          {item.completeness_score}% complete
+                        </span>
+                      </div>
+                      {item.action_reasons && item.action_reasons.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {item.action_reasons.slice(0, 2).map((reason: string, i: number) => (
+                            <span key={i} className="text-[10px] px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full font-medium">
+                              {reason}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="text-xs font-semibold text-blue-700">
+                      Priority: {Math.round(item.priority_score)}
+                    </span>
+                    {item.high_priority_keywords_missing > 0 && (
+                      <span className="text-[10px] text-slate-500">
+                        {item.high_priority_keywords_missing} keywords missing
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -396,6 +477,61 @@ function RecommendationsSection({ summary }: { summary: BolCustomerAnalysisSumma
 
 // ── Products Section ───────────────────────────────────────────────────────────
 
+// Helper: Completeness Badge (fetches score per product)
+function CompletenessBadge({ ean, customerId }: { ean: string; customerId: string }) {
+  const [score, setScore] = React.useState<number | null>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    getBolProductAnalysis(customerId, ean)
+      .then(data => {
+        setScore(data.completeness?.overall_completeness_score ?? null);
+        setLoading(false);
+      })
+      .catch(() => {
+        setScore(null);
+        setLoading(false);
+      });
+  }, [ean, customerId]);
+
+  if (loading) {
+    return <span className="text-xs text-slate-400">...</span>;
+  }
+
+  if (score === null) {
+    return <span className="text-xs text-slate-400">—</span>;
+  }
+
+  const color = score >= 80 ? 'green' : score >= 60 ? 'amber' : 'red';
+
+  return (
+    <div
+      className="flex items-center justify-center gap-1.5 group relative"
+      title={`Completeness: ${score}% (${score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : 'Needs improvement'})`}
+    >
+      <div className="w-12 h-2 rounded-full bg-slate-200 overflow-hidden shadow-inner">
+        <div
+          className={clsx(
+            'h-full transition-all duration-300',
+            color === 'green' ? 'bg-gradient-to-r from-green-400 to-green-600' :
+            color === 'amber' ? 'bg-gradient-to-r from-amber-400 to-amber-600' :
+            'bg-gradient-to-r from-red-400 to-red-600'
+          )}
+          style={{ width: `${score}%` }}
+        />
+      </div>
+      <span className={clsx(
+        'text-[10px] font-semibold tabular-nums',
+        color === 'green' ? 'text-green-700' :
+        color === 'amber' ? 'text-amber-700' :
+        'text-red-700'
+      )}>
+        {score}%
+      </span>
+    </div>
+  );
+}
+
 type SortKey = 'title' | 'ean' | 'regularStock' | 'price' | null;
 type SortDir = 'asc' | 'desc';
 
@@ -415,6 +551,9 @@ function ProductsSection({
   const [page, setPage]             = useState(0);
   const [selectedFulfillment, setSelectedFulfillment] = useState<('FBB' | 'FBR')[]>([]);
   const [showEOL, setShowEOL]       = useState<'all' | 'active' | 'eol'>('active');
+  const [selectedProduct, setSelectedProduct] = useState<BolProduct | null>(null);
+  const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all'); // low = <=3, out = 0
+  const [advertFilter, setAdvertFilter] = useState<'all' | 'advertised' | 'not-advertised'>('all');
 
   useEffect(() => {
     if (!bolCustomerId) return;
@@ -469,6 +608,14 @@ function ProductsSection({
     // EOL filter
     if (showEOL === 'active' && p.eol) return false;
     if (showEOL === 'eol' && !p.eol) return false;
+
+    // Stock filter
+    if (stockFilter === 'low' && p.regularStock > 3) return false;
+    if (stockFilter === 'out' && p.regularStock !== 0) return false;
+
+    // Advertising filter
+    if (advertFilter === 'advertised' && !p.advertised) return false;
+    if (advertFilter === 'not-advertised' && p.advertised) return false;
 
     return true;
   });
@@ -572,7 +719,8 @@ function ProductsSection({
       else if (componentsFound > 0) partial++;
     }
 
-    return { total, complete, partial, missing, withIntro, withUSPs, withBullets, withSpecs };
+    const avgScore = total > 0 ? Math.round((complete * 100 + partial * 50) / total) : 0;
+    return { total, complete, partial, missing, withIntro, withUSPs, withBullets, withSpecs, avgScore };
   }, [products]);
 
   // ── price stats computed from products (listings JSON has prices; CSV export may not) ──
@@ -619,13 +767,19 @@ function ProductsSection({
       )}
 
       {/* Stats row */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-4 gap-3">
         <StatTile label="Total products" value={products ? titleStats.total : (f.offers_count ?? 0)} />
         <StatTile
           label="Avg title score"
           value={`${f.avg_title_score ?? 0}`}
           sub="out of 100"
           color={!f.avg_title_score ? 'default' : f.avg_title_score >= 80 ? 'green' : f.avg_title_score >= 60 ? 'amber' : 'red'}
+        />
+        <StatTile
+          label="Avg description score"
+          value={products ? `${descriptionStats.avgScore}` : '—'}
+          sub="out of 100"
+          color={!products ? 'default' : descriptionStats.avgScore >= 80 ? 'green' : descriptionStats.avgScore >= 50 ? 'amber' : 'red'}
         />
         <StatTile
           label="Offers with price"
@@ -906,6 +1060,38 @@ function ProductsSection({
                 >{status}</button>
               ))}
             </div>
+
+            {/* Stock filter */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 font-medium">Stock:</span>
+              {(['all', 'low', 'out'] as const).map(stock => (
+                <button
+                  key={stock}
+                  onClick={() => setStockFilter(stock)}
+                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium transition-colors capitalize',
+                    stockFilter === stock
+                      ? 'bg-amber-600 text-white border-amber-600'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                  )}
+                >{stock === 'low' ? '≤3' : stock === 'out' ? '0' : stock}</button>
+              ))}
+            </div>
+
+            {/* Advertising filter */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 font-medium">Ads:</span>
+              {(['all', 'advertised', 'not-advertised'] as const).map(adv => (
+                <button
+                  key={adv}
+                  onClick={() => setAdvertFilter(adv)}
+                  className={clsx('px-2 py-1 rounded border text-[11px] leading-none font-medium transition-colors',
+                    advertFilter === adv
+                      ? 'bg-green-600 text-white border-green-600'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-400'
+                  )}
+                >{adv === 'all' ? 'All' : adv === 'advertised' ? 'Yes' : 'No'}</button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -940,7 +1126,8 @@ function ProductsSection({
                   >
                     EAN <SortArrow col="ean" />
                   </th>
-                  <th className="px-4 py-2 text-left font-semibold text-slate-500">bSKU</th>
+                  <th className="px-4 py-2 text-left font-semibold text-slate-500">Category</th>
+                  <th className="px-4 py-2 text-center font-semibold text-slate-500">Complete</th>
                   <th className="px-4 py-2 text-center font-semibold text-slate-500">Type</th>
                   <th
                     className="px-4 py-2 text-right font-semibold text-slate-500 cursor-pointer select-none hover:text-slate-700"
@@ -954,8 +1141,10 @@ function ProductsSection({
                   >
                     Stock <SortArrow col="regularStock" />
                   </th>
+                  <th className="px-4 py-2 text-center font-semibold text-slate-500">Advertised</th>
                   <th className="px-4 py-2 text-center font-semibold text-slate-500">Hold</th>
                   <th className="px-4 py-2 text-center font-semibold text-slate-500">EOL</th>
+                  <th className="px-4 py-2 text-center font-semibold text-slate-500">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -967,7 +1156,10 @@ function ProductsSection({
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-slate-500 font-mono">{p.ean}</td>
-                    <td className="px-4 py-2.5 text-slate-500">{p.bsku ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-slate-500">{p.category ?? <span className="text-slate-300">—</span>}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      <CompletenessBadge ean={p.ean} customerId={bolCustomerId} />
+                    </td>
                     <td className="px-4 py-2.5 text-center">
                       {p.fulfilmentType ? (
                         <span className={clsx(
@@ -995,6 +1187,13 @@ function ProductsSection({
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-center">
+                      {p.advertised ? (
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-700">Yes</span>
+                      ) : (
+                        <span className="text-slate-300">No</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
                       {p.onHold ? (
                         <span className="inline-block w-2 h-2 rounded-full bg-red-500" title="On hold by retailer" />
                       ) : null}
@@ -1009,6 +1208,14 @@ function ProductsSection({
                       ) : (
                         <span className="text-slate-300">—</span>
                       )}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <button
+                        onClick={() => setSelectedProduct(p)}
+                        className="px-2 py-1 text-[10px] font-medium text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                      >
+                        Details
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -1049,6 +1256,15 @@ function ProductsSection({
       </div>
 
       <RecList recs={filteredRecs} />
+
+      {/* Product Detail Modal */}
+      {selectedProduct && (
+        <ProductDetailModal
+          product={selectedProduct}
+          customerId={bolCustomerId}
+          onClose={() => setSelectedProduct(null)}
+        />
+      )}
     </div>
   );
 }
