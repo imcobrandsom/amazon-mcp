@@ -1288,23 +1288,27 @@ function CampaignSection({
       .finally(() => setChartLoading(false));
   }, [bolCustomerId, dateRangeStart, dateRangeEnd]);
 
-  // ── Aggregate metrics computed from live campData (accurate vs stale analysis.findings) ──
+  // ── Aggregate metrics computed from chartData (time-series endpoint is more reliable) ──
+  // NOTE: We intentionally use chartData instead of campData here. The chart endpoint
+  // (bol-campaigns-chart.ts) aggregates by period_start_date, has no LIMIT, and is
+  // proven to return correct values. campData (bol-campaigns.ts) deduplicates by
+  // latest row per campaign which can miss data when the date-range filter is applied.
   const campMetrics = useMemo(() => {
-    const cs = campData?.campaigns ?? [];
-    const spend       = cs.reduce((s, c) => s + (c.spend       ?? 0), 0);
-    const revenue     = cs.reduce((s, c) => s + (c.revenue     ?? 0), 0);
-    const impressions = cs.reduce((s, c) => s + (c.impressions ?? 0), 0);
-    const clicks      = cs.reduce((s, c) => s + (c.clicks      ?? 0), 0);
-    const conversions = cs.reduce((s, c) => s + (c.conversions ?? 0), 0);
+    const pts = chartData ?? [];
+    const spend       = pts.reduce((s, p) => s + (p.spend       ?? 0), 0);
+    const revenue     = pts.reduce((s, p) => s + (p.revenue     ?? 0), 0);
+    const impressions = pts.reduce((s, p) => s + (p.impressions ?? 0), 0);
+    const clicks      = pts.reduce((s, p) => s + (p.clicks      ?? 0), 0);
+    const conversions = pts.reduce((s, p) => s + (p.conversions ?? 0), 0);
     const roas    = spend > 0 ? revenue / spend : 0;
     const ctrPct  = impressions > 0 ? (clicks / impressions) * 100 : 0;
     const cvrPct  = clicks > 0 ? (conversions / clicks) * 100 : 0;
     return { spend, revenue, clicks, conversions, roas, ctrPct, cvrPct };
-  }, [campData]);
+  }, [chartData]);
 
   const roasColor = campMetrics.roas >= 5 ? 'green' : campMetrics.roas >= 3 ? 'amber' : 'red';
 
-  if (loading) {
+  if (loading || chartLoading) {
     return (
       <div className="flex items-center justify-center py-16 text-slate-400">
         <RefreshCw size={18} className="animate-spin mr-2" />

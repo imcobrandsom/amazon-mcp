@@ -572,109 +572,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     try {
-      const campaigns = await getAdsCampaigns(adsToken);
-
-      // Ad groups per campaign
-      const allAdGroups: unknown[] = [];
-      for (const campaign of (campaigns as Array<{ campaignId?: string }>).slice(0, 20)) {
-        if (campaign.campaignId) {
-          allAdGroups.push(...await getAdsAdGroups(adsToken, campaign.campaignId));
-          await sleep(100);
-        }
-      }
-
-      // Keywords per ad group
-      const allKeywords: Array<Record<string, unknown>> = [];
-      for (const adGroup of (allAdGroups as Array<{ adGroupId?: string }>).slice(0, 40)) {
-        if (adGroup.adGroupId) {
-          allKeywords.push(...(await getAdsKeywords(adsToken, adGroup.adGroupId) as Array<Record<string, unknown>>));
-          await sleep(100);
-        }
-      }
-
+      // Campaign-only: skip ad groups + keywords setup to save ~60 API calls (~30s).
+      // This keeps the ads sync well within the 300s function limit.
+      const campaigns   = await getAdsCampaigns(adsToken);
       const campaignIds = (campaigns as Array<{ campaignId?: string }>)
         .filter(c => c.campaignId).map(c => c.campaignId as string);
-      const keywordIds = allKeywords.filter(k => k.keywordId).map(k => k.keywordId as string);
 
       const allCampRows: Array<Record<string, unknown>> = [];
-      const allKwRows:   Array<Record<string, unknown>> = [];
-      let daysWithData = 0;
+      let daysWithData   = 0;
       let daysWithErrors = 0;
 
-      for (let dayOffset = daysToFetch - 1; dayOffset >= 0; dayOffset--) {
-        const date = new Date(now.getTime() - dayOffset * 86400000).toISOString().slice(0, 10);
+      // Fetch 2 days in parallel per batch → ~15 batches × ~500ms = ~7.5s total.
+      const CONCURRENT = 2;
+      for (let batchStart = daysToFetch - 1; batchStart >= 0; batchStart -= CONCURRENT) {
+        const dayOffsets = Array.from(
+          { length: Math.min(CONCURRENT, batchStart + 1) },
+          (_, i) => batchStart - i
+        );
 
-        try {
-          const campSubTotals = (await getAdsCampaignPerformance(adsToken, campaignIds, date, date)) as Array<Record<string, unknown>>;
+        await Promise.all(dayOffsets.map(async (dayOffset) => {
+          const date = new Date(now.getTime() - dayOffset * 86400000).toISOString().slice(0, 10);
+          try {
+            const campSubTotals = (await getAdsCampaignPerformance(adsToken, campaignIds, date, date)) as Array<Record<string, unknown>>;
 
-          for (const camp of campaigns as Array<Record<string, unknown>>) {
-            const campaignId = camp.campaignId as string;
-            const p = campSubTotals.find(s => s.entityId === campaignId)
-                   ?? campSubTotals.find(s => s.campaignId === campaignId)
-                   ?? campSubTotals[campaigns.indexOf(camp as never)]
-                   ?? {};
-            const budget = camp.dailyBudget as Record<string, unknown> | undefined;
-
-            allCampRows.push({
-              bol_customer_id:   customer.id,
-              campaign_id:       campaignId,
-              campaign_name:     (camp.name as string) ?? null,
-              campaign_type:     (camp.campaignType as string) ?? null,
-              state:             (camp.state as string) ?? null,
-              budget:            budget?.amount ?? null,
-              spend:             (p as Record<string, unknown>).cost ?? null,
-              impressions:       (p as Record<string, unknown>).impressions ?? null,
-              clicks:            (p as Record<string, unknown>).clicks ?? null,
-              ctr_pct:           (p as Record<string, unknown>).ctr ?? null,
-              avg_cpc:           (p as Record<string, unknown>).averageCpc ?? null,
-              revenue:           (p as Record<string, unknown>).sales14d ?? null,
-              roas:              (p as Record<string, unknown>).roas14d ?? null,
-              acos:              (p as Record<string, unknown>).acos14d ?? null,
-              conversions:       (p as Record<string, unknown>).conversions14d ?? null,
-              cvr_pct:           (p as Record<string, unknown>).conversionRate14d ?? null,
-              period_start_date: date,
-              period_end_date:   date,
-            });
-          }
-
-          if (keywordIds.length > 0) {
-            const kwSubTotals = (await getAdsKeywordPerformance(adsToken, keywordIds, date, date)) as Array<Record<string, unknown>>;
-
-            for (const kw of allKeywords) {
-              const keywordId = kw.keywordId as string;
-              const p = kwSubTotals.find(s => s.entityId === keywordId)
-                     ?? kwSubTotals.find(s => s.keywordId === keywordId)
-                     ?? kwSubTotals[allKeywords.indexOf(kw)]
+            for (const camp of campaigns as Array<Record<string, unknown>>) {
+              const campaignId = camp.campaignId as string;
+              const p = campSubTotals.find(s => s.entityId === campaignId)
+                     ?? campSubTotals.find(s => s.campaignId === campaignId)
                      ?? {};
-              const bid = kw.bid as Record<string, unknown> | undefined;
+              const budget = camp.dailyBudget as Record<string, unknown> | undefined;
 
-              allKwRows.push({
+              allCampRows.push({
                 bol_customer_id:   customer.id,
-                keyword_id:        keywordId,
-                keyword_text:      (kw.keywordText as string) ?? null,
-                match_type:        (kw.matchType as string) ?? null,
-                campaign_id:       kw.campaignId as string,
-                ad_group_id:       (kw.adGroupId as string) ?? null,
-                bid:               bid?.amount ?? null,
-                state:             (kw.state as string) ?? null,
+                campaign_id:       campaignId,
+                campaign_name:     (camp.name as string) ?? null,
+                campaign_type:     (camp.campaignType as string) ?? null,
+                state:             (camp.state as string) ?? null,
+                budget:            budget?.amount ?? null,
                 spend:             (p as Record<string, unknown>).cost ?? null,
                 impressions:       (p as Record<string, unknown>).impressions ?? null,
                 clicks:            (p as Record<string, unknown>).clicks ?? null,
+                ctr_pct:           (p as Record<string, unknown>).ctr ?? null,
+                avg_cpc:           (p as Record<string, unknown>).averageCpc ?? null,
                 revenue:           (p as Record<string, unknown>).sales14d ?? null,
+                roas:              (p as Record<string, unknown>).roas14d ?? null,
                 acos:              (p as Record<string, unknown>).acos14d ?? null,
                 conversions:       (p as Record<string, unknown>).conversions14d ?? null,
+                cvr_pct:           (p as Record<string, unknown>).conversionRate14d ?? null,
                 period_start_date: date,
                 period_end_date:   date,
               });
             }
+            daysWithData++;
+          } catch (dayError) {
+            console.error(`[bol-sync-trigger/ads] Failed for ${date}:`, dayError);
+            daysWithErrors++;
           }
-
-          daysWithData++;
-          await sleep(200);
-        } catch (dayError) {
-          console.error(`[bol-sync-trigger/ads] Failed for ${date}:`, dayError);
-          daysWithErrors++;
-        }
+        }));
       }
 
       // Upsert campaign rows (overwrites on conflict — no duplicates)
@@ -685,22 +639,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (campErr) console.error('[bol-sync-trigger/ads] Campaign upsert error:', campErr);
       }
 
-      // Upsert keyword rows
-      if (allKwRows.length > 0) {
-        const { error: kwErr } = await supabase
-          .from('bol_keyword_performance')
-          .upsert(allKwRows, { onConflict: 'bol_customer_id,keyword_id,period_start_date' });
-        if (kwErr) console.error('[bol-sync-trigger/ads] Keyword upsert error:', kwErr);
-      }
-
       report.advertising = {
-        status:          'ok',
-        campaigns:       campaigns.length,
-        keywords:        allKeywords.length,
-        days_with_data:  daysWithData,
-        days_with_errors: daysWithErrors,
+        status:             'ok',
+        campaigns:          campaigns.length,
+        days_with_data:     daysWithData,
+        days_with_errors:   daysWithErrors,
         camp_rows_upserted: allCampRows.length,
-        kw_rows_upserted:   allKwRows.length,
+        kw_rows_upserted:   0, // campaign-only sync; keywords synced via 'main'
       };
     } catch (e) {
       report.advertising = { status: 'failed', error: (e as Error).message };
