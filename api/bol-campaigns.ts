@@ -30,9 +30,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .eq('bol_customer_id', customerId);
 
   if (from && to && typeof from === 'string' && typeof to === 'string') {
-    // Filter by period dates (report date range), not synced_at
-    campQuery = campQuery.gte('period_start_date', from).lte('period_end_date', to);
-    kwQuery = kwQuery.gte('period_start_date', from).lte('period_end_date', to);
+    // Filter by period_start_date for BOTH bounds.
+    // All rows are single-day (period_start_date == period_end_date), so filtering on
+    // period_start_date is correct and safe. Using period_end_date in the upper bound
+    // was a bug: rows where period_end_date IS NULL (old data / backfill) would be
+    // excluded entirely by Postgres NULL comparison, causing stat tiles to show €0
+    // while the chart (which only uses period_start_date) showed correct values.
+    campQuery = campQuery.gte('period_start_date', from).lte('period_start_date', to);
+    kwQuery = kwQuery.gte('period_start_date', from).lte('period_start_date', to);
   }
 
   const [campResult, kwResult] = await Promise.all([

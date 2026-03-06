@@ -2438,6 +2438,7 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
     complete:   { status: 'idle', message: '' },
     extended:   { status: 'idle', message: '' },
     competitor: { status: 'idle', message: '' },
+    ads:        { status: 'idle', message: '' },
   });
   const [runningAll, setRunningAll] = useState(false);
 
@@ -2539,24 +2540,18 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
         const d = result.detail ?? {};
         message = [d.competitors, d.rankings, d.catalog].filter(Boolean).join(' · ') || 'Done';
         if (result.message) { finalStatus = 'pending'; message = result.message; }
-      } else if (phase === 'competitor') {
-        // competitor analysis - may need multiple iterations due to timeout limits
-        const catCount = result.categories_analyzed ?? 0;
-        const prodCount = result.competitors_found ?? 0;
-        const kwCount = result.keywords_analyzed ?? 0;
-        const parts: string[] = [];
-        if (catCount > 0) parts.push(`${catCount} cat`);
-        if (prodCount > 0) parts.push(`${prodCount} comp`);
-        if (kwCount > 0) parts.push(`${kwCount} kw`);
-        message = parts.join(' · ') || 'Processing...';
-        if (result.error) { finalStatus = 'error'; message = result.error; }
-
-        // Check if there are more categories to process
-        const resultStr = JSON.stringify(result);
-        if (resultStr.includes('more categories')) {
-          // There are more categories - run again
-          finalStatus = 'pending';
-          message += ' · more...';
+      } else if (phase === 'ads') {
+        const ads = result.advertising;
+        if (ads?.status === 'ok') {
+          const campRows = (ads as Record<string, unknown>).camp_rows_upserted ?? 0;
+          const kwRows   = (ads as Record<string, unknown>).kw_rows_upserted   ?? 0;
+          const daysData = (ads as Record<string, unknown>).days_with_data      ?? 0;
+          message = `✅ ${campRows} camp · ${kwRows} kw rows · ${daysData} days`;
+        } else if (ads?.status === 'failed' || ads?.error) {
+          finalStatus = 'error';
+          message = `❌ ${ads?.error ?? 'ads sync failed'}`;
+        } else {
+          message = result.message ?? 'Done';
         }
       }
 
@@ -2594,6 +2589,7 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
     { id: 'complete',   label: '2. Process Offers',     sub: 'CSV download + analysis' },
     { id: 'extended',   label: '3. Extended Data',      sub: 'Competitors · Keywords'  },
     { id: 'competitor', label: '4. Competitor Analysis', sub: 'Categories · Content · Keywords' },
+    { id: 'ads',        label: '↻ Ads Only',            sub: '30 days campaign + keyword data' },
   ];
 
   const isAnyRunning = Object.values(phases).some(p => p.status === 'running') || runningAll;

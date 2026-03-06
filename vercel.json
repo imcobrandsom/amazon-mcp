@@ -36,6 +36,18 @@
     }
   ],
   "functions": {
+    "api/bol-sync-start.ts": {
+      "maxDuration": 300
+    },
+    "api/bol-sync-trigger.ts": {
+      "maxDuration": 300
+    },
+    "api/bol-sync-extended.ts": {
+      "maxDuration": 300
+    },
+    "api/bol-sync-competitor-analysis.ts": {
+      "maxDuration": 300
+    },
     "api/bol-content-upload.ts": {
       "maxDuration": 60,
       "memory": 1024

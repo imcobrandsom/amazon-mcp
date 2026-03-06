@@ -72,8 +72,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const { customerId, syncType } = req.body ?? {};
   if (!customerId) return res.status(400).json({ error: 'customerId is required' });
-  if (!['main', 'complete', 'extended', 'competitor'].includes(syncType)) {
-    return res.status(400).json({ error: "syncType must be 'main', 'complete', 'extended', or 'competitor'" });
+  if (!['main', 'complete', 'extended', 'competitor', 'ads'].includes(syncType)) {
+    return res.status(400).json({ error: "syncType must be 'main', 'complete', 'extended', 'competitor', or 'ads'" });
   }
 
   const supabase  = createAdminClient();
@@ -541,6 +541,174 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       duration_ms:   Date.now() - startedAt,
       results,
     });
+  }
+
+  // ── syncType: ads ──────────────────────────────────────────────────────────────
+  // Advertising-only sync: fetches 30 days of campaign + keyword performance.
+  // Faster than 'main' because it skips inventory, orders, returns, and performance
+  // indicators. Use this to backfill or refresh ad data without running the full sync.
+  if (syncType === 'ads') {
+    const adsId     = customer.ads_client_id     as string | null;
+    const adsSecret = customer.ads_client_secret as string | null;
+
+    if (!adsId || !adsSecret) {
+      return res.status(400).json({ error: 'No ads credentials configured for this customer' });
+    }
+
+    let adsToken: string;
+    try {
+      adsToken = await getAdsToken(adsId, adsSecret);
+    } catch (e) {
+      return res.status(400).json({ error: `Bol.com Ads auth failed: ${(e as Error).message}` });
+    }
+
+    const now = new Date();
+    const daysToFetch = 30; // Always fetch full 30 days (API maximum)
+    const report: Record<string, unknown> = {
+      customer_id: customer.id,
+      seller_name: customer.seller_name,
+      started_at:  now.toISOString(),
+      days_fetched: daysToFetch,
+    };
+
+    try {
+      const campaigns = await getAdsCampaigns(adsToken);
+
+      // Ad groups per campaign
+      const allAdGroups: unknown[] = [];
+      for (const campaign of (campaigns as Array<{ campaignId?: string }>).slice(0, 20)) {
+        if (campaign.campaignId) {
+          allAdGroups.push(...await getAdsAdGroups(adsToken, campaign.campaignId));
+          await sleep(100);
+        }
+      }
+
+      // Keywords per ad group
+      const allKeywords: Array<Record<string, unknown>> = [];
+      for (const adGroup of (allAdGroups as Array<{ adGroupId?: string }>).slice(0, 40)) {
+        if (adGroup.adGroupId) {
+          allKeywords.push(...(await getAdsKeywords(adsToken, adGroup.adGroupId) as Array<Record<string, unknown>>));
+          await sleep(100);
+        }
+      }
+
+      const campaignIds = (campaigns as Array<{ campaignId?: string }>)
+        .filter(c => c.campaignId).map(c => c.campaignId as string);
+      const keywordIds = allKeywords.filter(k => k.keywordId).map(k => k.keywordId as string);
+
+      const allCampRows: Array<Record<string, unknown>> = [];
+      const allKwRows:   Array<Record<string, unknown>> = [];
+      let daysWithData = 0;
+      let daysWithErrors = 0;
+
+      for (let dayOffset = daysToFetch - 1; dayOffset >= 0; dayOffset--) {
+        const date = new Date(now.getTime() - dayOffset * 86400000).toISOString().slice(0, 10);
+
+        try {
+          const campSubTotals = (await getAdsCampaignPerformance(adsToken, campaignIds, date, date)) as Array<Record<string, unknown>>;
+
+          for (const camp of campaigns as Array<Record<string, unknown>>) {
+            const campaignId = camp.campaignId as string;
+            const p = campSubTotals.find(s => s.entityId === campaignId)
+                   ?? campSubTotals.find(s => s.campaignId === campaignId)
+                   ?? campSubTotals[campaigns.indexOf(camp as never)]
+                   ?? {};
+            const budget = camp.dailyBudget as Record<string, unknown> | undefined;
+
+            allCampRows.push({
+              bol_customer_id:   customer.id,
+              campaign_id:       campaignId,
+              campaign_name:     (camp.name as string) ?? null,
+              campaign_type:     (camp.campaignType as string) ?? null,
+              state:             (camp.state as string) ?? null,
+              budget:            budget?.amount ?? null,
+              spend:             (p as Record<string, unknown>).cost ?? null,
+              impressions:       (p as Record<string, unknown>).impressions ?? null,
+              clicks:            (p as Record<string, unknown>).clicks ?? null,
+              ctr_pct:           (p as Record<string, unknown>).ctr ?? null,
+              avg_cpc:           (p as Record<string, unknown>).averageCpc ?? null,
+              revenue:           (p as Record<string, unknown>).sales14d ?? null,
+              roas:              (p as Record<string, unknown>).roas14d ?? null,
+              acos:              (p as Record<string, unknown>).acos14d ?? null,
+              conversions:       (p as Record<string, unknown>).conversions14d ?? null,
+              cvr_pct:           (p as Record<string, unknown>).conversionRate14d ?? null,
+              period_start_date: date,
+              period_end_date:   date,
+            });
+          }
+
+          if (keywordIds.length > 0) {
+            const kwSubTotals = (await getAdsKeywordPerformance(adsToken, keywordIds, date, date)) as Array<Record<string, unknown>>;
+
+            for (const kw of allKeywords) {
+              const keywordId = kw.keywordId as string;
+              const p = kwSubTotals.find(s => s.entityId === keywordId)
+                     ?? kwSubTotals.find(s => s.keywordId === keywordId)
+                     ?? kwSubTotals[allKeywords.indexOf(kw)]
+                     ?? {};
+              const bid = kw.bid as Record<string, unknown> | undefined;
+
+              allKwRows.push({
+                bol_customer_id:   customer.id,
+                keyword_id:        keywordId,
+                keyword_text:      (kw.keywordText as string) ?? null,
+                match_type:        (kw.matchType as string) ?? null,
+                campaign_id:       kw.campaignId as string,
+                ad_group_id:       (kw.adGroupId as string) ?? null,
+                bid:               bid?.amount ?? null,
+                state:             (kw.state as string) ?? null,
+                spend:             (p as Record<string, unknown>).cost ?? null,
+                impressions:       (p as Record<string, unknown>).impressions ?? null,
+                clicks:            (p as Record<string, unknown>).clicks ?? null,
+                revenue:           (p as Record<string, unknown>).sales14d ?? null,
+                acos:              (p as Record<string, unknown>).acos14d ?? null,
+                conversions:       (p as Record<string, unknown>).conversions14d ?? null,
+                period_start_date: date,
+                period_end_date:   date,
+              });
+            }
+          }
+
+          daysWithData++;
+          await sleep(200);
+        } catch (dayError) {
+          console.error(`[bol-sync-trigger/ads] Failed for ${date}:`, dayError);
+          daysWithErrors++;
+        }
+      }
+
+      // Upsert campaign rows (overwrites on conflict — no duplicates)
+      if (allCampRows.length > 0) {
+        const { error: campErr } = await supabase
+          .from('bol_campaign_performance')
+          .upsert(allCampRows, { onConflict: 'bol_customer_id,campaign_id,period_start_date' });
+        if (campErr) console.error('[bol-sync-trigger/ads] Campaign upsert error:', campErr);
+      }
+
+      // Upsert keyword rows
+      if (allKwRows.length > 0) {
+        const { error: kwErr } = await supabase
+          .from('bol_keyword_performance')
+          .upsert(allKwRows, { onConflict: 'bol_customer_id,keyword_id,period_start_date' });
+        if (kwErr) console.error('[bol-sync-trigger/ads] Keyword upsert error:', kwErr);
+      }
+
+      report.advertising = {
+        status:          'ok',
+        campaigns:       campaigns.length,
+        keywords:        allKeywords.length,
+        days_with_data:  daysWithData,
+        days_with_errors: daysWithErrors,
+        camp_rows_upserted: allCampRows.length,
+        kw_rows_upserted:   allKwRows.length,
+      };
+    } catch (e) {
+      report.advertising = { status: 'failed', error: (e as Error).message };
+    }
+
+    await supabase.from('bol_customers').update({ last_sync_at: new Date().toISOString() }).eq('id', customer.id);
+    report.duration_ms = Date.now() - startedAt;
+    return res.status(200).json(report);
   }
 
   // ── syncType: extended ─────────────────────────────────────────────────────────
