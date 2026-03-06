@@ -895,40 +895,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // This triggers the full competitor analysis sync (8-step flow)
     // Note: This is a heavy operation that can take 10-15 minutes on first run
     try {
-      // Import and execute the competitor analysis sync directly
-      const { default: competitorAnalysisHandler } = await import('./bol-sync-competitor-analysis.js');
+      // Call the competitor analysis endpoint via HTTP (serverless functions can't import each other)
+      const baseUrl = process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : 'http://localhost:3000';
 
-      // Create a mock request with internal call flag
-      const mockReq = {
+      const response = await fetch(`${baseUrl}/api/bol-sync-competitor-analysis`, {
         method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           'x-internal-call': 'true', // Mark as internal call to bypass auth
         },
-        query: {},
-        body: { customerId }, // Pass customerId in body
-      } as VercelRequest;
+        body: JSON.stringify({ customerId }),
+      });
 
-      // Create a response capture object
-      let responseData: any = null;
-      let responseStatus = 200;
-      const mockRes = {
-        status: (code: number) => {
-          responseStatus = code;
-          return mockRes;
-        },
-        json: (data: any) => {
-          responseData = data;
-          return mockRes;
-        },
-      } as VercelResponse;
-
-      // Execute the competitor analysis sync
-      await competitorAnalysisHandler(mockReq, mockRes);
-
-      // Transform response to match BolSyncResult format
-      if (responseStatus !== 200 || !responseData) {
-        return res.status(responseStatus).json(responseData || { error: 'Competitor analysis failed' });
+      if (!response.ok) {
+        const errorText = await response.text();
+        return res.status(response.status).json({
+          error: `Competitor analysis endpoint returned ${response.status}`,
+          detail: errorText,
+          duration_ms: Date.now() - startedAt,
+        });
       }
+
+      const responseData = await response.json();
 
       // Extract results from competitor analysis response
       const results = responseData.results || [];
