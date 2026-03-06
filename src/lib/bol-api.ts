@@ -265,7 +265,7 @@ export async function getBolCompetitorCatalog(
 
 // ── Dashboard-initiated sync ──────────────────────────────────────────────────
 
-export type BolSyncType = 'main' | 'complete' | 'extended' | 'competitor' | 'ads';
+export type BolSyncType = 'main' | 'complete' | 'competitor' | 'ads';
 
 export interface BolSyncResult {
   customer_id?: string;

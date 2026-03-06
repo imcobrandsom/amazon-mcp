@@ -4,11 +4,13 @@
  * Dashboard-initiated sync for a single bol customer.
  * Called from the Follo portal — verified via Supabase JWT.
  *
- * Body: { customerId: string, syncType: 'main' | 'complete' | 'extended' }
+ * Body: { customerId: string, syncType: 'main' | 'complete' | 'competitor' | 'ads' }
  *
- * syncType 'main'     → inventory + orders + ads + returns + performance + starts offers export
- * syncType 'complete' → polls pending offers export jobs for this customer, processes if ready
- * syncType 'extended' → competitor offers + keyword ranks + catalog enrichment (top-50 EANs)
+ * syncType 'main'       → inventory + orders + ads + returns + performance + starts offers export
+ * syncType 'complete'   → polls pending offers export jobs for this customer, processes if ready
+ * syncType 'competitor' → full competitor analysis (categories, content, keywords) via dedicated endpoint
+ * syncType 'ads'        → advertising-only sync (30 days campaign + keyword performance)
+ * syncType 'extended'   → DEPRECATED (redirects to 'competitor')
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createAdminClient } from './_lib/supabase-admin.js';
@@ -73,7 +75,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { customerId, syncType } = req.body ?? {};
   if (!customerId) return res.status(400).json({ error: 'customerId is required' });
   if (!['main', 'complete', 'extended', 'competitor', 'ads'].includes(syncType)) {
-    return res.status(400).json({ error: "syncType must be 'main', 'complete', 'extended', 'competitor', or 'ads'" });
+    return res.status(400).json({ error: "syncType must be 'main', 'complete', 'competitor', or 'ads'" });
   }
 
   const supabase  = createAdminClient();
@@ -876,147 +878,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // ── syncType: extended ─────────────────────────────────────────────────────────
+  // DEPRECATED: Use 'competitor' sync type instead
+  // Competitor analysis moved to dedicated endpoint to avoid Vercel timeout (10min limit)
   if (syncType === 'extended') {
-    let token: string;
-    try {
-      token = await getBolToken(customer.bol_client_id as string, customer.bol_client_secret as string);
-    } catch (e) {
-      return res.status(400).json({ error: `Bol.com auth failed: ${(e as Error).message}` });
-    }
-
-    const detail: Record<string, unknown> = {};
-
-    // Load latest offers snapshot to get EANs
-    const { data: latestSnap } = await supabase
-      .from('bol_raw_snapshots')
-      .select('raw_data')
-      .eq('bol_customer_id', customerId)
-      .eq('data_type', 'listings')
-      .order('fetched_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    const offers: Record<string, string>[] = (latestSnap?.raw_data as { offers?: Record<string, string>[] })?.offers ?? [];
-
-    if (!offers.length) {
-      return res.status(200).json({
-        message:     'No offers snapshot found — run main sync first',
-        duration_ms: Date.now() - startedAt,
-      });
-    }
-
-    // Extract top-50 unique EANs
-    const eanSet    = new Set<string>();
-    const eanOfferMap = new Map<string, string>();
-    for (const offer of offers) {
-      const ean     = offer['EAN'] ?? offer['ean'] ?? '';
-      const offerId = offer['Offer Id'] ?? offer['offer_id'] ?? '';
-      if (ean && !eanSet.has(ean)) {
-        eanSet.add(ean);
-        eanOfferMap.set(ean, offerId);
-      }
-      if (eanSet.size >= 50) break;
-    }
-    const eans = Array.from(eanSet);
-
-    // Block 1: Competitor data
-    let competitorCount = 0;
-    for (const ean of eans) {
-      try {
-        const [competingOffers, ratings] = await Promise.all([
-          getCompetingOffers(token, ean),
-          getProductRatings(token, ean),
-        ]);
-        const typed = competingOffers as Array<{
-          offerId?: string; sellerId?: string;
-          price?: { listPrice?: number }; condition?: string; isBuyBoxWinner?: boolean;
-        }>;
-        const ourOfferId  = eanOfferMap.get(ean);
-        let ourPrice: number | null = null;
-        let buyBoxWinner  = false;
-        let lowestPrice: number | null = null;
-        for (const co of typed) {
-          const price = co.price?.listPrice ?? null;
-          if (price !== null) {
-            if (lowestPrice === null || price < lowestPrice) lowestPrice = price;
-            if (co.offerId === ourOfferId) { ourPrice = price; buyBoxWinner = co.isBuyBoxWinner ?? false; }
-          }
-        }
-        await supabase.from('bol_competitor_snapshots').insert({
-          bol_customer_id:        customerId,
-          ean,
-          offer_id:               ourOfferId ?? null,
-          our_price:              ourPrice,
-          lowest_competing_price: lowestPrice,
-          buy_box_winner:         buyBoxWinner,
-          competitor_count:       typed.length,
-          competitor_prices:      typed.map(co => ({ offerId: co.offerId, sellerId: co.sellerId, price: co.price?.listPrice ?? null, condition: co.condition, isBuyBoxWinner: co.isBuyBoxWinner })),
-          rating_score:           (ratings as { score?: number } | null)?.score ?? null,
-          rating_count:           (ratings as { count?: number } | null)?.count ?? null,
-        });
-        competitorCount++;
-      } catch { /* skip individual EAN errors */ }
-      await sleep(150);
-    }
-    detail.competitors = `${competitorCount}/${eans.length} EANs updated`;
-
-    // Block 2: Keyword rankings
-    // Note: getProductRanks now requires a date parameter - use yesterday
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const dateStr = yesterday.toISOString().split('T')[0];
-
-    let rankCount = 0;
-    for (const ean of eans) {
-      try {
-        const [searchRanks, browseRanks] = await Promise.all([
-          getProductRanks(token, ean, dateStr, 'SEARCH'),
-          getProductRanks(token, ean, dateStr, 'BROWSE'),
-        ]);
-        const rows: Array<{ bol_customer_id: string; ean: string; search_type: string; rank: number; impressions: number; week_of: string }> = [];
-        // New response format: { ranks: BolProductRank[], hasNextPage: boolean }
-        for (const rank of searchRanks.ranks) rows.push({ bol_customer_id: customerId, ean, search_type: 'SEARCH', rank: rank.rank, impressions: rank.impressions, week_of: dateStr });
-        for (const rank of browseRanks.ranks) rows.push({ bol_customer_id: customerId, ean, search_type: 'BROWSE', rank: rank.rank, impressions: rank.impressions, week_of: dateStr });
-        if (rows.length > 0) { await supabase.from('bol_keyword_rankings').insert(rows); rankCount++; }
-      } catch { /* skip */ }
-      await sleep(100);
-    }
-    detail.rankings = `${rankCount}/${eans.length} EANs ranked`;
-
-    // Block 3: Catalog + forecast (top-20 only)
-    const top20 = eans.slice(0, 20);
-    const catalogData: Record<string, unknown> = {};
-    const forecastData: Record<string, unknown> = {};
-    for (const ean of top20) {
-      try { const c = await getCatalogProduct(token, ean); if (c) catalogData[ean] = c; } catch { /* skip */ }
-      await sleep(150);
-    }
-    for (const ean of top20) {
-      const offerId = eanOfferMap.get(ean);
-      if (!offerId) continue;
-      try { const f = await getSalesForecast(token, offerId, 4); if (f.length > 0) forecastData[offerId] = f; } catch { /* skip */ }
-      await sleep(150);
-    }
-    if (Object.keys(catalogData).length > 0 || Object.keys(forecastData).length > 0) {
-      await supabase.from('bol_raw_snapshots').insert({
-        bol_customer_id: customerId,
-        data_type:       'listings',
-        raw_data:        { catalog: catalogData, forecast: forecastData },
-        record_count:    Object.keys(catalogData).length,
-        quality_score:   1.0,
-      });
-    }
-    detail.catalog = `${Object.keys(catalogData).length} catalog items, ${Object.keys(forecastData).length} forecasts`;
-
     return res.status(200).json({
       customer_id: customerId,
       seller_name: customer.seller_name,
       duration_ms: Date.now() - startedAt,
-      detail,
+      message: 'Extended sync is deprecated. Use syncType "competitor" instead.',
+      note: 'Competitor analysis now runs via /api/bol-sync-competitor-analysis or automatic cron job (every 6h).',
+      suggestion: 'Trigger competitor analysis by calling this endpoint with syncType="competitor"',
     });
   }
 
-  // ── syncType: competitor ───────────────────────────────────────────────────────
   if (syncType === 'competitor') {
     // This triggers the full competitor analysis sync (8-step flow)
     // Note: This is a heavy operation that can take 10-15 minutes on first run

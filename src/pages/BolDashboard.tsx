@@ -2670,7 +2670,6 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
   const [phases, setPhases] = useState<Record<BolSyncType, PhaseState>>({
     main:       { status: 'idle', message: '' },
     complete:   { status: 'idle', message: '' },
-    extended:   { status: 'idle', message: '' },
     competitor: { status: 'idle', message: '' },
     ads:        { status: 'idle', message: '' },
   });
@@ -2770,10 +2769,6 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
         } else {
           message = `${c} export${c !== 1 ? 's' : ''} processed`;
         }
-      } else if (phase === 'extended') {
-        const d = result.detail ?? {};
-        message = [d.competitors, d.rankings, d.catalog].filter(Boolean).join(' · ') || 'Done';
-        if (result.message) { finalStatus = 'pending'; message = result.message; }
       } else if (phase === 'ads') {
         const ads = result.advertising;
         if (ads?.status === 'ok') {
@@ -2810,8 +2805,7 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
         await new Promise<void>(r => setTimeout(r, 40000));
         await runPhase('complete');
       }
-      await runPhase('extended');
-      // Run competitor analysis after extended sync (uses category data from extended)
+      // Run competitor analysis (includes all extended data + deep analysis)
       await runPhase('competitor');
     } finally {
       setRunningAll(false);
@@ -2821,8 +2815,7 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
   const PHASES: Array<{ id: BolSyncType; label: string; sub: string }> = [
     { id: 'main',       label: '1. Main Sync',          sub: 'Inventory · Orders · Ads' },
     { id: 'complete',   label: '2. Process Offers',     sub: 'CSV download + analysis' },
-    { id: 'extended',   label: '3. Extended Data',      sub: 'Competitors · Keywords'  },
-    { id: 'competitor', label: '4. Competitor Analysis', sub: 'Categories · Content · Keywords' },
+    { id: 'competitor', label: '3. Competitor Analysis', sub: 'Categories · Content · Keywords (10-15 min)' },
     { id: 'ads',        label: '↻ Ads Only',            sub: '30 days campaign + keyword data' },
   ];
 
