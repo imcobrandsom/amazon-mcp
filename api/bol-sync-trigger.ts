@@ -528,6 +528,85 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
       }
+
+      // ── Add fallback keywords for products without advertising keywords ────
+      console.log('[bol-sync-trigger] Checking for products without keywords...');
+      const { data: allProducts } = await supabase
+        .from('bol_raw_snapshots')
+        .select('raw_data')
+        .eq('bol_customer_id', customer.id)
+        .eq('data_type', 'inventory')
+        .order('fetched_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (allProducts) {
+        const inventory = ((allProducts.raw_data as any)?.inventory || []) as Array<{ ean?: string }>;
+        const { data: keywordCoverage } = await supabase
+          .from('bol_product_keyword_targets')
+          .select('ean')
+          .eq('bol_customer_id', customer.id);
+
+        const eansWithKeywords = new Set((keywordCoverage || []).map(k => k.ean));
+        const productsWithoutKeywords = inventory.filter(p => p.ean && !eansWithKeywords.has(p.ean));
+
+        if (productsWithoutKeywords.length > 0) {
+          console.log(`[bol-sync-trigger] ${productsWithoutKeywords.length} products need fallback keywords`);
+
+          // Import fallback logic inline
+          const { data: categories } = await supabase
+            .from('bol_product_categories')
+            .select('ean, category_slug')
+            .eq('bol_customer_id', customer.id);
+
+          const eanToCategory = new Map((categories || []).map(c => [c.ean, c.category_slug]));
+
+          const CATEGORY_KEYWORDS: Record<string, Array<{ keyword: string; priority: number }>> = {
+            'sportlegging': [
+              { keyword: 'sportlegging', priority: 10 },
+              { keyword: 'sportlegging dames', priority: 9 },
+              { keyword: 'high waist legging', priority: 8 },
+              { keyword: 'yoga legging', priority: 7 },
+            ],
+            'sportshirts-tops': [
+              { keyword: 'sportshirt dames', priority: 10 },
+              { keyword: 'sporttop', priority: 9 },
+            ],
+            'sport-bhs': [
+              { keyword: 'sport bh', priority: 10 },
+              { keyword: 'sport bh dames', priority: 9 },
+            ],
+            'sportbroeken-shorts': [
+              { keyword: 'sportbroek dames', priority: 10 },
+              { keyword: 'sportshort', priority: 9 },
+            ],
+            'sportkleding': [
+              { keyword: 'sportkleding', priority: 10 },
+              { keyword: 'sportkleding dames', priority: 9 },
+            ],
+          };
+
+          let fallbackAdded = 0;
+          for (const product of productsWithoutKeywords.slice(0, 50)) {
+            const categorySlug = eanToCategory.get(product.ean!);
+            const keywords = CATEGORY_KEYWORDS[categorySlug!] || CATEGORY_KEYWORDS['sportkleding'];
+
+            for (const { keyword, priority } of keywords) {
+              await supabase.from('bol_product_keyword_targets').insert({
+                bol_customer_id: customer.id,
+                ean: product.ean,
+                keyword,
+                priority: categorySlug ? priority : Math.max(3, priority - 3),
+                source: 'category_analysis',
+              }).select('id').maybeSingle();
+              fallbackAdded++;
+            }
+          }
+
+          console.log(`[bol-sync-trigger] Added ${fallbackAdded} fallback keywords`);
+          (report as any).keywords_fallback_added = fallbackAdded;
+        }
+      }
     } catch (e) {
       console.error('[bol-sync-trigger] Auto-populate keywords failed:', e);
       (report as any).keywords_auto_populate_error = (e as Error).message;
