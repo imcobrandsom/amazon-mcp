@@ -211,34 +211,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               const campPerfSubTotals = await getAdsCampaignPerformance(adsToken, campaignIds, date, date);
               const campSubTotals = campPerfSubTotals as Array<Record<string, unknown>>;
 
-              // Create rows for each campaign
-              for (const camp of campaigns as Array<Record<string, unknown>>) {
-                const campaignId = camp.campaignId as string;
-                const p = campSubTotals.find(s => s.entityId === campaignId)
-                       ?? campSubTotals.find(s => s.campaignId === campaignId)
-                       ?? {};
-                const budget = camp.dailyBudget as Record<string, unknown> | undefined;
+              // Skip day if API returned no data (reporting delay for recent days) — avoids
+              // overwriting previously-stored good data with null metrics on next cron run.
+              if (campSubTotals.length === 0) {
+                console.log(`[bol-sync-start] No campaign data for ${date} (reporting delay), skipping`);
+              } else {
+                // Create rows for each campaign
+                for (const camp of campaigns as Array<Record<string, unknown>>) {
+                  const campaignId = camp.campaignId as string;
+                  const campIdx    = campaignIds.indexOf(campaignId);
+                  // Three-way lookup: entityId → campaignId → positional index
+                  // (Bol Ads API returns subTotals array in the same order as the entity-ids param)
+                  const p: Record<string, unknown> =
+                    campSubTotals.find(s => s.entityId   === campaignId) ??
+                    campSubTotals.find(s => s.campaignId === campaignId) ??
+                    (campIdx >= 0 ? campSubTotals[campIdx] : undefined)  ??
+                    {};
 
-                allCampRows.push({
-                  bol_customer_id:    customer.id,
-                  campaign_id:        campaignId,
-                  campaign_name:      (camp.name as string) ?? null,
-                  campaign_type:      (camp.campaignType as string) ?? null,
-                  state:              (camp.state as string) ?? null,
-                  budget:             budget?.amount ?? null,
-                  spend:              p.cost ?? null,
-                  impressions:        p.impressions ?? null,
-                  clicks:             p.clicks ?? null,
-                  ctr_pct:            p.ctr ?? null,
-                  avg_cpc:            p.averageCpc ?? null,
-                  revenue:            p.sales14d ?? null,
-                  roas:               p.roas14d ?? null,
-                  acos:               p.acos14d ?? null,
-                  conversions:        p.conversions14d ?? null,
-                  cvr_pct:            p.conversionRate14d ?? null,
-                  period_start_date:  date,  // Single day
-                  period_end_date:    date,  // Single day
-                });
+                  if (Object.keys(p).length === 0) continue; // Campaign had no activity this day
+
+                  const budget = camp.dailyBudget as Record<string, unknown> | undefined;
+
+                  allCampRows.push({
+                    bol_customer_id:    customer.id,
+                    campaign_id:        campaignId,
+                    campaign_name:      (camp.name as string) ?? null,
+                    campaign_type:      (camp.campaignType as string) ?? null,
+                    state:              (camp.state as string) ?? null,
+                    budget:             budget?.amount ?? null,
+                    spend:              p.cost ?? null,
+                    impressions:        p.impressions ?? null,
+                    clicks:             p.clicks ?? null,
+                    ctr_pct:            p.ctr ?? null,
+                    avg_cpc:            p.averageCpc ?? null,
+                    revenue:            p.sales14d ?? null,
+                    roas:               p.roas14d ?? null,
+                    acos:               p.acos14d ?? null,
+                    conversions:        p.conversions14d ?? null,
+                    cvr_pct:            p.conversionRate14d ?? null,
+                    period_start_date:  date,
+                    period_end_date:    date,
+                  });
+                }
               }
 
               // Fetch keyword performance for this specific day
@@ -246,31 +260,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const kwPerfSubTotals = await getAdsKeywordPerformance(adsToken, keywordIds, date, date);
                 const kwSubTotals = kwPerfSubTotals as Array<Record<string, unknown>>;
 
-                for (const kw of allKeywords) {
-                  const keywordId = kw.keywordId as string;
-                  const p = kwSubTotals.find(s => s.entityId === keywordId)
-                         ?? kwSubTotals.find(s => s.keywordId === keywordId)
-                         ?? {};
-                  const bid = kw.bid as Record<string, unknown> | undefined;
+                // Skip if API returned no keyword data for this day (same reporting-delay protection)
+                if (kwSubTotals.length > 0) {
+                  for (const kw of allKeywords) {
+                    const keywordId = kw.keywordId as string;
+                    const kwIdx     = keywordIds.indexOf(keywordId);
+                    // Three-way lookup: entityId → keywordId → positional index
+                    const p: Record<string, unknown> =
+                      kwSubTotals.find(s => s.entityId  === keywordId) ??
+                      kwSubTotals.find(s => s.keywordId === keywordId) ??
+                      (kwIdx >= 0 ? kwSubTotals[kwIdx] : undefined)   ??
+                      {};
 
-                  allKwRows.push({
-                    bol_customer_id:    customer.id,
-                    keyword_id:         keywordId,
-                    keyword_text:       (kw.keywordText as string) ?? null,
-                    match_type:         (kw.matchType as string) ?? null,
-                    campaign_id:        kw.campaignId as string,
-                    ad_group_id:        (kw.adGroupId as string) ?? null,
-                    bid:                bid?.amount ?? null,
-                    state:              (kw.state as string) ?? null,
-                    spend:              p.cost ?? null,
-                    impressions:        p.impressions ?? null,
-                    clicks:             p.clicks ?? null,
-                    revenue:            p.sales14d ?? null,
-                    acos:               p.acos14d ?? null,
-                    conversions:        p.conversions14d ?? null,
-                    period_start_date:  date,  // Single day
-                    period_end_date:    date,  // Single day
-                  });
+                    if (Object.keys(p).length === 0) continue; // Keyword had no activity this day
+
+                    const bid = kw.bid as Record<string, unknown> | undefined;
+
+                    allKwRows.push({
+                      bol_customer_id:    customer.id,
+                      keyword_id:         keywordId,
+                      keyword_text:       (kw.keywordText as string) ?? null,
+                      match_type:         (kw.matchType as string) ?? null,
+                      campaign_id:        kw.campaignId as string,
+                      ad_group_id:        (kw.adGroupId as string) ?? null,
+                      bid:                bid?.amount ?? null,
+                      state:              (kw.state as string) ?? null,
+                      spend:              p.cost ?? null,
+                      impressions:        p.impressions ?? null,
+                      clicks:             p.clicks ?? null,
+                      revenue:            p.sales14d ?? null,
+                      acos:               p.acos14d ?? null,
+                      conversions:        p.conversions14d ?? null,
+                      period_start_date:  date,
+                      period_end_date:    date,
+                    });
+                  }
+                } else {
+                  console.log(`[bol-sync-start] No keyword data for ${date} (reporting delay), skipping`);
                 }
               }
 

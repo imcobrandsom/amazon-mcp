@@ -1279,11 +1279,25 @@ function CampaignSection({
     if (!bolCustomerId || !dateRangeStart || !dateRangeEnd) return;
     setChartLoading(true);
 
-    getBolCampaignChart(bolCustomerId, {
-      from: dateRangeStart.toISOString().slice(0, 10),
-      to: dateRangeEnd.toISOString().slice(0, 10),
-    })
-      .then(r => setChartData(r.points))
+    const fromStr = dateRangeStart.toISOString().slice(0, 10);
+    const toStr   = dateRangeEnd.toISOString().slice(0, 10);
+
+    getBolCampaignChart(bolCustomerId, { from: fromStr, to: toStr })
+      .then(r => {
+        // Fill in every date in the selected range with zeros where no data exists.
+        // Without this, recharts only renders dates that have rows, making the
+        // X-axis appear to end at the last data point instead of the selected end date.
+        const byDate = new Map(r.points.map(p => [p.date, p]));
+        const filled: BolCampaignChartPoint[] = [];
+        for (let ms = new Date(fromStr).getTime(); ms <= new Date(toStr).getTime(); ms += 86_400_000) {
+          const dateStr = new Date(ms).toISOString().slice(0, 10);
+          filled.push(byDate.get(dateStr) ?? {
+            date: dateStr, spend: 0, revenue: 0, impressions: 0,
+            clicks: 0, conversions: 0, roas: 0, acos: 0, tacos: 0, ctr_pct: 0,
+          });
+        }
+        setChartData(filled);
+      })
       .catch(() => setChartData([]))
       .finally(() => setChartLoading(false));
   }, [bolCustomerId, dateRangeStart, dateRangeEnd]);
