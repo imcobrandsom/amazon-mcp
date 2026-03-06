@@ -423,6 +423,116 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       report.performance = { status: 'failed', error: (e as Error).message };
     }
 
+    // ── Auto-populate keywords if empty (Phase 1 setup) ──────────────────────
+    try {
+      const { count: keywordCount } = await supabase
+        .from('bol_product_keyword_targets')
+        .select('id', { count: 'exact', head: true })
+        .eq('bol_customer_id', customer.id);
+
+      if (keywordCount === 0 && customer.ads_client_id && customer.ads_client_secret) {
+        console.log('[bol-sync-trigger] No keywords found, auto-populating from advertising...');
+
+        // Import populate logic inline to avoid circular dependencies
+        const adsToken = await getAdsToken(customer.ads_client_id as string, customer.ads_client_secret as string);
+        const campaigns = await getAdsCampaigns(adsToken);
+
+        let keywordsMapped = 0;
+        for (const campaign of (campaigns as Array<{ campaignId?: string; state?: string }>).slice(0, 20)) {
+          if (campaign.campaignId && campaign.state === 'ENABLED') {
+            const adGroups = await getAdsAdGroups(adsToken, campaign.campaignId);
+
+            for (const adGroup of (adGroups as Array<{ adGroupId?: string }>).slice(0, 40)) {
+              if (!adGroup.adGroupId) continue;
+
+              const [keywords, productTargets] = await Promise.all([
+                getAdsKeywords(adsToken, adGroup.adGroupId),
+                fetch(`https://advertising-api.bol.com/v10/ad-groups/${adGroup.adGroupId}/product-targets`, {
+                  headers: { 'Authorization': `Bearer ${adsToken}`, 'Accept': 'application/vnd.advertising.v10+json' }
+                }).then(r => r.ok ? r.json() : { productTargets: [] }).then(d => (d as any).productTargets || [])
+              ]);
+
+              const eans = (productTargets as Array<{ ean?: string }>).map(t => t.ean).filter(Boolean) as string[];
+
+              for (const kw of (keywords as Array<{ keywordText?: string; bid?: { amount?: number } }>)) {
+                if (!kw.keywordText) continue;
+                const priority = Math.min(10, Math.max(1, Math.round((kw.bid?.amount ?? 0.5) * 10)));
+
+                for (const ean of eans) {
+                  await supabase.from('bol_product_keyword_targets').insert({
+                    bol_customer_id: customer.id,
+                    ean,
+                    keyword: kw.keywordText.toLowerCase().trim(),
+                    priority,
+                    source: 'advertising',
+                  }).select('id').maybeSingle(); // maybeSingle to ignore duplicates
+                  keywordsMapped++;
+                }
+              }
+
+              await sleep(100);
+            }
+            await sleep(100);
+          }
+        }
+
+        console.log(`[bol-sync-trigger] Auto-populated ${keywordsMapped} keyword-product mappings`);
+        (report as any).keywords_auto_populated = keywordsMapped;
+
+        // Auto-sync keyword metadata (in_title, in_description flags)
+        if (keywordsMapped > 0) {
+          console.log('[bol-sync-trigger] Auto-syncing keyword metadata...');
+          const { data: keywords } = await supabase
+            .from('bol_product_keyword_targets')
+            .select('id, ean, keyword')
+            .eq('bol_customer_id', customer.id);
+
+          if (keywords && keywords.length > 0) {
+            const { data: invSnapshot } = await supabase
+              .from('bol_raw_snapshots')
+              .select('raw_data')
+              .eq('bol_customer_id', customer.id)
+              .eq('data_type', 'inventory')
+              .order('fetched_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            const inventory = ((invSnapshot?.raw_data as any)?.inventory || []) as Array<{
+              ean?: string;
+              title?: string;
+              description?: string;
+            }>;
+
+            let updated = 0;
+            for (const kw of keywords) {
+              const prod = inventory.find(p => p.ean === kw.ean);
+              if (!prod) continue;
+
+              const title = (prod.title || '').toLowerCase();
+              const desc = (prod.description || '').toLowerCase();
+              const kwLower = kw.keyword.toLowerCase();
+
+              await supabase
+                .from('bol_product_keyword_targets')
+                .update({
+                  in_title: title.includes(kwLower),
+                  in_description: desc.includes(kwLower),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', kw.id);
+              updated++;
+            }
+
+            console.log(`[bol-sync-trigger] Auto-synced ${updated} keyword metadata records`);
+            (report as any).keywords_metadata_synced = updated;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[bol-sync-trigger] Auto-populate keywords failed:', e);
+      (report as any).keywords_auto_populate_error = (e as Error).message;
+    }
+
     await supabase.from('bol_customers').update({ last_sync_at: new Date().toISOString() }).eq('id', customer.id);
     report.duration_ms = Date.now() - startedAt;
     return res.status(200).json(report);
