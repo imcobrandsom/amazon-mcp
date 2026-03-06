@@ -109,6 +109,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .limit(15);
 
         const topKeywords = (keywordData ?? []).map(k => k.keyword);
+        const keywordVolumes: Record<string, number> = {};
+        (keywordData ?? []).forEach(k => {
+          keywordVolumes[k.keyword] = k.search_volume;
+        });
 
         // Fetch trending keywords (volume increased in last 2 weeks)
         const twoWeeksAgo = new Date();
@@ -176,6 +180,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           trendingKeywords,
           competitorTitles,
           competitorUsps,
+          keywordVolumes,
         });
 
         // Insert proposal

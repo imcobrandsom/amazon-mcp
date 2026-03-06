@@ -684,11 +684,17 @@ function ProposalDrawer({
           {/* Current content */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-2">Huidige content</h3>
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div>
                 <span className="text-xs text-slate-500">Titel:</span>
                 <p className={clsx('text-sm mt-1', (proposal.score_before ?? 0) < 60 ? 'text-red-600' : 'text-slate-700')}>
                   {proposal.current_title || '(leeg)'}
+                </p>
+              </div>
+              <div>
+                <span className="text-xs text-slate-500">Omschrijving:</span>
+                <p className="text-sm mt-1 text-slate-600 whitespace-pre-wrap">
+                  {proposal.current_description || '(leeg)'}
                 </p>
               </div>
               {proposal.score_before !== null && (
@@ -746,6 +752,22 @@ function ProposalDrawer({
               </div>
             </div>
           </div>
+
+          {/* Search volume impact */}
+          {proposal.changes_summary.search_volume_added > 0 && (
+            <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-1">
+                <Sparkles size={16} className="text-purple-600" />
+                <h3 className="text-sm font-semibold text-purple-900">Zoekvolume Impact</h3>
+              </div>
+              <p className="text-2xl font-bold text-purple-700">
+                +{proposal.changes_summary.search_volume_added.toLocaleString('nl-NL')}
+              </p>
+              <p className="text-xs text-purple-600 mt-1">
+                Extra maandelijks zoekvolume door nieuwe keywords
+              </p>
+            </div>
+          )}
 
           {/* Changes */}
           <div>

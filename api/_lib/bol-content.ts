@@ -14,6 +14,7 @@ export interface GenerateContentInput {
   trendingKeywords: string[];      // keywords with volume_trend='up' in last 2 weeks
   competitorTitles: string[];      // from bol_competitor_catalog for same category
   competitorUsps: string[];        // extracted_usps from bol_competitor_content_analysis
+  keywordVolumes: Record<string, number>;  // keyword -> search volume mapping for impact calc
 }
 
 export interface GenerateContentOutput {
@@ -28,12 +29,13 @@ export async function generateBolContent(input: GenerateContentInput): Promise<G
   const systemPrompt = `Je bent een expert Bol.com content schrijver die producttitels en omschrijvingen schrijft in het Nederlands.
 
 Bol.com best practices:
-- Titel: 150–175 tekens. Formaat: [Merk] [Producttype] [Kernkenmerk] [Variant] [Doelgroep]. Begin altijd met het sterkste zoekwoord.
+- Titel: 150–175 tekens. Formaat: [Merk] [Producttype] [Kernkenmerk] [Variant] [Doelgroep]. BEGIN ALTIJD MET HET MERK als dit is meegeleverd in de basiscontent.
+- Omschrijving bestaat altijd uit meerdere onderdelen: Intro (minimaal 100 tekens), USPs (minimaal 5 bullet points), Specificaties/lange paragraaf (200-400 tekens).
 - Omschrijving intro: minimaal 100 tekens, pakkende eerste zin die de productwaarde direct duidelijk maakt.
 - USPs: minimaal 5 bullet points (• symbool), elk 20–80 tekens, beginnen met het voordeel. Geen verboden claims (eco, duurzaam, milieuvriendelijk, CO2-neutraal tenzij gecertificeerd).
 - Lange omschrijving: 200–400 tekens aanvullende productinformatie.
 - Verboden woorden: Milieuvriendelijk, Eco, Duurzaam, Biologisch afbreekbaar, CO2-neutraal, Klimaatneutraal (tenzij aantoonbaar gecertificeerd).
-- Schrijf altijd in het Nederlands.
+- Schrijf altijd in het Nederlands. Gebruik GEEN Engelse keywords, tenzij dit duidelijk uit het zoekwoordenonderzoek blijkt (bijvoorbeeld bij productnamen zoals "iPhone" of "MacBook").
 - Verwerk trending zoekwoorden natuurlijk in de tekst, niet als keyword stuffing.
 
 ${input.clientBrief ? `Klantbriefing:\n${input.clientBrief}` : ''}`;
@@ -106,9 +108,16 @@ Geef je antwoord in dit exacte JSON-formaat:
   // Build changes summary
   const currentKeywords = extractKeywords(input.currentTitle ?? '', input.currentDescription ?? '');
   const proposedKeywords = extractKeywords(proposed_title, proposed_description);
+  const keywordsAdded = proposedKeywords.filter(k => !currentKeywords.includes(k));
+
+  // Calculate search volume impact: sum volume of newly added keywords
+  const searchVolumeAdded = keywordsAdded.reduce((sum, keyword) => {
+    return sum + (input.keywordVolumes[keyword] ?? 0);
+  }, 0);
+
   const changes_summary: BolContentChangesSummary = {
     title_changed: proposed_title !== input.currentTitle,
-    keywords_added: proposedKeywords.filter(k => !currentKeywords.includes(k)),
+    keywords_added: keywordsAdded,
     keywords_removed: currentKeywords.filter(k => !proposedKeywords.includes(k)),
     keywords_promoted_to_title: proposedKeywords.filter(k =>
       !extractKeywords(input.currentTitle ?? '', '').includes(k) &&
@@ -119,6 +128,7 @@ Geef je antwoord in dit exacte JSON-formaat:
     title_chars_after: proposed_title.length,
     desc_chars_before: input.currentDescription?.length ?? 0,
     desc_chars_after: proposed_description.length,
+    search_volume_added: searchVolumeAdded,
   };
 
   return {

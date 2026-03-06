@@ -380,6 +380,7 @@ export interface BolContentChangesSummary {
   title_chars_after: number;
   desc_chars_before: number;
   desc_chars_after: number;
+  search_volume_added: number;  // Total search volume of newly added keywords
 }
 
 export interface BolContentProposal {
