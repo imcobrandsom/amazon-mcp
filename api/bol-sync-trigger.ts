@@ -237,69 +237,82 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           try {
             // Fetch campaign performance for this specific day
-            const campPerfSubTotals = await getAdsCampaignPerformance(adsToken, campaignIds, date, date);
-            const campSubTotals = campPerfSubTotals as Array<Record<string, unknown>>;
+            const campSubTotals = (await getAdsCampaignPerformance(adsToken, campaignIds, date, date)) as Array<Record<string, unknown>>;
 
-            // Create rows for each campaign
-            for (const camp of campaigns as Array<Record<string, unknown>>) {
-              const campaignId = camp.campaignId as string;
-              const p = campSubTotals.find(s => s.entityId === campaignId)
-                     ?? campSubTotals.find(s => s.campaignId === campaignId)
-                     ?? {};
-              const budget = camp.dailyBudget as Record<string, unknown> | undefined;
+            // Skip if API returned no data (reporting delay for very recent days).
+            // Don't upsert null rows — that would overwrite previously-stored good data.
+            if (campSubTotals.length > 0) {
+              for (const camp of campaigns as Array<Record<string, unknown>>) {
+                const campaignId = camp.campaignId as string;
+                const campIdx    = campaignIds.indexOf(campaignId);
+                const p: Record<string, unknown> =
+                  campSubTotals.find(s => s.entityId   === campaignId) ??
+                  campSubTotals.find(s => s.campaignId === campaignId) ??
+                  (campIdx >= 0 ? campSubTotals[campIdx] : undefined)  ??
+                  {};
 
-              allCampRows.push({
-                bol_customer_id:    customer.id,
-                campaign_id:        campaignId,
-                campaign_name:      (camp.name as string) ?? null,
-                campaign_type:      (camp.campaignType as string) ?? null,
-                state:              (camp.state as string) ?? null,
-                budget:             budget?.amount ?? null,
-                spend:              p.cost ?? null,
-                impressions:        p.impressions ?? null,
-                clicks:             p.clicks ?? null,
-                ctr_pct:            p.ctr ?? null,
-                avg_cpc:            p.averageCpc ?? null,
-                revenue:            p.sales14d ?? null,
-                roas:               p.roas14d ?? null,
-                acos:               p.acos14d ?? null,
-                conversions:        p.conversions14d ?? null,
-                cvr_pct:            p.conversionRate14d ?? null,
-                period_start_date:  date,  // Single day
-                period_end_date:    date,  // Single day
-              });
+                if (Object.keys(p).length === 0) continue; // no activity this day
+
+                const budget = camp.dailyBudget as Record<string, unknown> | undefined;
+                allCampRows.push({
+                  bol_customer_id:    customer.id,
+                  campaign_id:        campaignId,
+                  campaign_name:      (camp.name as string) ?? null,
+                  campaign_type:      (camp.campaignType as string) ?? null,
+                  state:              (camp.state as string) ?? null,
+                  budget:             budget?.amount ?? null,
+                  spend:              p.cost ?? null,
+                  impressions:        p.impressions ?? null,
+                  clicks:             p.clicks ?? null,
+                  ctr_pct:            p.ctr ?? null,
+                  avg_cpc:            p.averageCpc ?? null,
+                  revenue:            p.sales14d ?? null,
+                  roas:               p.roas14d ?? null,
+                  acos:               p.acos14d ?? null,
+                  conversions:        p.conversions14d ?? null,
+                  cvr_pct:            p.conversionRate14d ?? null,
+                  period_start_date:  date,
+                  period_end_date:    date,
+                });
+              }
             }
 
             // Fetch keyword performance for this specific day
             if (keywordIds.length > 0) {
-              const kwPerfSubTotals = await getAdsKeywordPerformance(adsToken, keywordIds, date, date);
-              const kwSubTotals = kwPerfSubTotals as Array<Record<string, unknown>>;
+              const kwSubTotals = (await getAdsKeywordPerformance(adsToken, keywordIds, date, date)) as Array<Record<string, unknown>>;
 
-              for (const kw of allKeywords) {
-                const keywordId = kw.keywordId as string;
-                const p = kwSubTotals.find(s => s.entityId === keywordId)
-                       ?? kwSubTotals.find(s => s.keywordId === keywordId)
-                       ?? {};
-                const bid = kw.bid as Record<string, unknown> | undefined;
+              if (kwSubTotals.length > 0) {
+                for (const kw of allKeywords) {
+                  const keywordId = kw.keywordId as string;
+                  const kwIdx     = keywordIds.indexOf(keywordId);
+                  const p: Record<string, unknown> =
+                    kwSubTotals.find(s => s.entityId  === keywordId) ??
+                    kwSubTotals.find(s => s.keywordId === keywordId) ??
+                    (kwIdx >= 0 ? kwSubTotals[kwIdx] : undefined)   ??
+                    {};
 
-                allKwRows.push({
-                  bol_customer_id:    customer.id,
-                  keyword_id:         keywordId,
-                  keyword_text:       (kw.keywordText as string) ?? null,
-                  match_type:         (kw.matchType as string) ?? null,
-                  campaign_id:        kw.campaignId as string,
-                  ad_group_id:        (kw.adGroupId as string) ?? null,
-                  bid:                bid?.amount ?? null,
-                  state:              (kw.state as string) ?? null,
-                  spend:              p.cost ?? null,
-                  impressions:        p.impressions ?? null,
-                  clicks:             p.clicks ?? null,
-                  revenue:            p.sales14d ?? null,
-                  acos:               p.acos14d ?? null,
-                  conversions:        p.conversions14d ?? null,
-                  period_start_date:  date,  // Single day
-                  period_end_date:    date,  // Single day
-                });
+                  if (Object.keys(p).length === 0) continue;
+
+                  const bid = kw.bid as Record<string, unknown> | undefined;
+                  allKwRows.push({
+                    bol_customer_id:    customer.id,
+                    keyword_id:         keywordId,
+                    keyword_text:       (kw.keywordText as string) ?? null,
+                    match_type:         (kw.matchType as string) ?? null,
+                    campaign_id:        kw.campaignId as string,
+                    ad_group_id:        (kw.adGroupId as string) ?? null,
+                    bid:                bid?.amount ?? null,
+                    state:              (kw.state as string) ?? null,
+                    spend:              p.cost ?? null,
+                    impressions:        p.impressions ?? null,
+                    clicks:             p.clicks ?? null,
+                    revenue:            p.sales14d ?? null,
+                    acos:               p.acos14d ?? null,
+                    conversions:        p.conversions14d ?? null,
+                    period_start_date:  date,
+                    period_end_date:    date,
+                  });
+                }
               }
             }
 
@@ -595,11 +608,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           try {
             const campSubTotals = (await getAdsCampaignPerformance(adsToken, campaignIds, date, date)) as Array<Record<string, unknown>>;
 
+            // If the API returned no data at all for this day (reporting delay for
+            // very recent days), skip entirely — don't upsert null rows that would
+            // overwrite previously-stored good data.
+            if (campSubTotals.length === 0) {
+              daysWithData++; // still counts as "attempted"
+              return;
+            }
+
             for (const camp of campaigns as Array<Record<string, unknown>>) {
               const campaignId = camp.campaignId as string;
-              const p = campSubTotals.find(s => s.entityId === campaignId)
-                     ?? campSubTotals.find(s => s.campaignId === campaignId)
-                     ?? {};
+              const campIdx    = campaignIds.indexOf(campaignId);
+              // Three-way lookup: by entityId → by campaignId → positional (Bol returns
+              // subTotals in the same order as the entity-ids request param).
+              const p: Record<string, unknown> =
+                campSubTotals.find(s => s.entityId   === campaignId) ??
+                campSubTotals.find(s => s.campaignId === campaignId) ??
+                (campIdx >= 0 ? campSubTotals[campIdx] : undefined)  ??
+                {};
+
+              // Skip if we still have no match (campaign had zero activity this day).
+              if (Object.keys(p).length === 0) continue;
+
               const budget = camp.dailyBudget as Record<string, unknown> | undefined;
 
               allCampRows.push({
@@ -609,16 +639,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 campaign_type:     (camp.campaignType as string) ?? null,
                 state:             (camp.state as string) ?? null,
                 budget:            budget?.amount ?? null,
-                spend:             (p as Record<string, unknown>).cost ?? null,
-                impressions:       (p as Record<string, unknown>).impressions ?? null,
-                clicks:            (p as Record<string, unknown>).clicks ?? null,
-                ctr_pct:           (p as Record<string, unknown>).ctr ?? null,
-                avg_cpc:           (p as Record<string, unknown>).averageCpc ?? null,
-                revenue:           (p as Record<string, unknown>).sales14d ?? null,
-                roas:              (p as Record<string, unknown>).roas14d ?? null,
-                acos:              (p as Record<string, unknown>).acos14d ?? null,
-                conversions:       (p as Record<string, unknown>).conversions14d ?? null,
-                cvr_pct:           (p as Record<string, unknown>).conversionRate14d ?? null,
+                spend:             p.cost ?? null,
+                impressions:       p.impressions ?? null,
+                clicks:            p.clicks ?? null,
+                ctr_pct:           p.ctr ?? null,
+                avg_cpc:           p.averageCpc ?? null,
+                revenue:           p.sales14d ?? null,
+                roas:              p.roas14d ?? null,
+                acos:              p.acos14d ?? null,
+                conversions:       p.conversions14d ?? null,
+                cvr_pct:           p.conversionRate14d ?? null,
                 period_start_date: date,
                 period_end_date:   date,
               });
