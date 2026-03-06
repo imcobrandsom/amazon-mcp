@@ -310,23 +310,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
 
-        // Bulk insert all campaign performance rows
+        // Upsert campaign performance rows (on conflict: overwrite with latest data)
         if (allCampRows.length > 0) {
-          const { error: campInsertError } = await supabase.from('bol_campaign_performance').insert(allCampRows);
+          const { error: campInsertError } = await supabase
+            .from('bol_campaign_performance')
+            .upsert(allCampRows, { onConflict: 'bol_customer_id,campaign_id,period_start_date' });
           if (campInsertError) {
-            console.error('[bol-sync-trigger] Failed to insert campaign performance:', campInsertError);
+            console.error('[bol-sync-trigger] Failed to upsert campaign performance:', campInsertError);
           } else {
-            console.log(`[bol-sync-trigger] Inserted ${allCampRows.length} campaign performance rows`);
+            console.log(`[bol-sync-trigger] Upserted ${allCampRows.length} campaign performance rows`);
           }
         }
 
-        // Bulk insert all keyword performance rows
+        // Upsert keyword performance rows (on conflict: overwrite with latest data)
         if (allKwRows.length > 0) {
-          const { error: kwInsertError } = await supabase.from('bol_keyword_performance').insert(allKwRows);
+          const { error: kwInsertError } = await supabase
+            .from('bol_keyword_performance')
+            .upsert(allKwRows, { onConflict: 'bol_customer_id,keyword_id,period_start_date' });
           if (kwInsertError) {
-            console.error('[bol-sync-trigger] Failed to insert keyword performance:', kwInsertError);
+            console.error('[bol-sync-trigger] Failed to upsert keyword performance:', kwInsertError);
           } else {
-            console.log(`[bol-sync-trigger] Inserted ${allKwRows.length} keyword performance rows`);
+            console.log(`[bol-sync-trigger] Upserted ${allKwRows.length} keyword performance rows`);
           }
         }
 

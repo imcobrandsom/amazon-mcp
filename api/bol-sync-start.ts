@@ -157,13 +157,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const adsToken  = await getAdsToken(adsClientId, adsClientSecret);
           const campaigns = await getAdsCampaigns(adsToken);
 
-          // Determine sync window: Sunday = full 30-day refresh, other days = incremental 1-day
-          // This balances API efficiency (1 day daily) with data completeness (30 days weekly)
+          // Determine sync window:
+          //   Sunday → full 30-day refresh (catches any gaps from the week)
+          //   Other days → 2 days (yesterday + today) so a single cron failure is self-healing
           const now = new Date();
-          const dayOfWeek = now.getUTCDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-          const daysToFetch = (dayOfWeek === 0) ? 30 : 1;
+          const dayOfWeek = now.getUTCDay(); // 0 = Sunday
+          const daysToFetch = (dayOfWeek === 0) ? 30 : 2;
 
-          const syncType = dayOfWeek === 0 ? 'Weekly full refresh (Sunday)' : 'Daily incremental';
+          const syncType = dayOfWeek === 0 ? 'Weekly full refresh (Sunday)' : 'Daily incremental (2 days)';
           const dateFrom = new Date(now.getTime() - daysToFetch * 86400000).toISOString().slice(0, 10);
           const dateTo = now.toISOString().slice(0, 10);
 
@@ -280,23 +281,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
           }
 
-          // Bulk insert all campaign performance rows
+          // Upsert campaign performance rows (on conflict: overwrite with latest data)
           if (allCampRows.length > 0) {
-            const { error: campInsertError } = await supabase.from('bol_campaign_performance').insert(allCampRows);
+            const { error: campInsertError } = await supabase
+              .from('bol_campaign_performance')
+              .upsert(allCampRows, { onConflict: 'bol_customer_id,campaign_id,period_start_date' });
             if (campInsertError) {
-              console.error('[bol-sync-start] Failed to insert campaign performance:', campInsertError);
+              console.error('[bol-sync-start] Failed to upsert campaign performance:', campInsertError);
             } else {
-              console.log(`[bol-sync-start] Inserted ${allCampRows.length} campaign performance rows`);
+              console.log(`[bol-sync-start] Upserted ${allCampRows.length} campaign performance rows`);
             }
           }
 
-          // Bulk insert all keyword performance rows
+          // Upsert keyword performance rows (on conflict: overwrite with latest data)
           if (allKwRows.length > 0) {
-            const { error: kwInsertError } = await supabase.from('bol_keyword_performance').insert(allKwRows);
+            const { error: kwInsertError } = await supabase
+              .from('bol_keyword_performance')
+              .upsert(allKwRows, { onConflict: 'bol_customer_id,keyword_id,period_start_date' });
             if (kwInsertError) {
-              console.error('[bol-sync-start] Failed to insert keyword performance:', kwInsertError);
+              console.error('[bol-sync-start] Failed to upsert keyword performance:', kwInsertError);
             } else {
-              console.log(`[bol-sync-start] Inserted ${allKwRows.length} keyword performance rows`);
+              console.log(`[bol-sync-start] Upserted ${allKwRows.length} keyword performance rows`);
             }
           }
 
