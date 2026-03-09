@@ -150,9 +150,10 @@ export async function enrichKeywordsForCustomer(customerId: string): Promise<{
     );
 
     // STEP 2: AI Content-Based Keyword Extraction
-    console.log('[enrich] Step 2: AI content extraction (50 products max)...');
+    console.log('[enrich] Step 2: AI content extraction (TEMP DISABLED - too slow)...');
 
-    const productsToAnalyze = inventory.filter(p => p.ean && (p.title || p.description)).slice(0, 50);
+    // TEMP: Skip AI to avoid timeout - will re-enable after testing basic flow
+    const productsToAnalyze = []; // inventory.filter(p => p.ean && (p.title || p.description)).slice(0, 50);
 
     for (const product of productsToAnalyze) {
       if (!product.ean) continue;
