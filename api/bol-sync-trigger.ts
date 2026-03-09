@@ -896,9 +896,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Note: This is a heavy operation that can take 10-15 minutes on first run
     try {
       // Call the competitor analysis endpoint via HTTP (serverless functions can't import each other)
-      const baseUrl = process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
-        : 'http://localhost:3000';
+      // Use the request's host header to ensure we call the same deployment
+      const host = req.headers['host'] || 'localhost:3000';
+      const protocol = host.includes('localhost') ? 'http' : 'https';
+      const baseUrl = `${protocol}://${host}`;
 
       console.log(`[bol-sync-trigger] Calling competitor analysis at ${baseUrl}/api/bol-sync-competitor-analysis`);
 
