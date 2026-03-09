@@ -900,6 +900,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ? `https://${process.env.VERCEL_URL}`
         : 'http://localhost:3000';
 
+      console.log(`[bol-sync-trigger] Calling competitor analysis at ${baseUrl}/api/bol-sync-competitor-analysis`);
+
       const response = await fetch(`${baseUrl}/api/bol-sync-competitor-analysis`, {
         method: 'POST',
         headers: {
@@ -908,6 +910,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
         body: JSON.stringify({ customerId }),
       });
+
+      console.log(`[bol-sync-trigger] Competitor analysis response status: ${response.status}`);
 
       if (!response.ok) {
         const errorText = await response.text();

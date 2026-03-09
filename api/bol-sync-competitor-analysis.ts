@@ -37,6 +37,13 @@ function isAuthorised(req: VercelRequest): boolean {
   const manual        = req.headers['x-webhook-secret'];
   const internal      = req.headers['x-internal-call'];
 
+  console.log('[bol-sync-competitor-analysis] Auth check:', {
+    hasCronSecret: !!cronSecret,
+    authHeader: auth ? 'present' : 'missing',
+    manualHeader: manual ? 'present' : 'missing',
+    internalHeader: internal,
+  });
+
   return (cronSecret && auth === `Bearer ${cronSecret}`)
       || (webhookSecret && manual === webhookSecret)
       || (internal === 'true') // Allow internal calls from bol-sync-trigger
