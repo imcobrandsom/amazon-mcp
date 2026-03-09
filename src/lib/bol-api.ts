@@ -543,6 +543,21 @@ export async function enrichKeywords(customerId: string): Promise<{
   });
 }
 
+/**
+ * Trigger AI keyword extraction chain
+ * Starts processing products in batches of 10 via self-triggering chain
+ */
+export async function triggerAIKeywordExtraction(customerId: string): Promise<{
+  message: string;
+  customerId: string;
+  info: string;
+}> {
+  return apiFetch(`/bol-keywords-ai-trigger`, {
+    method: 'POST',
+    body: JSON.stringify({ customerId }),
+  });
+}
+
 export async function getCustomerSettings(customerId: string): Promise<BolCustomerSettings | null> {
   const { data } = await supabase
     .from('bol_customer_settings')

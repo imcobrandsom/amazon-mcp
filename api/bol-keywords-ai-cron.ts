@@ -27,11 +27,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const supabase = createAdminClient();
 
   try {
-    // Get all active customers
-    const { data: customers } = await supabase
-      .from('bol_customers')
-      .select('id, name')
-      .eq('active', true);
+    // Check if specific customer requested (manual trigger)
+    const { customerId } = req.body || {};
+
+    let customers;
+    if (customerId) {
+      // Manual trigger for specific customer
+      const { data } = await supabase
+        .from('bol_customers')
+        .select('id, name')
+        .eq('id', customerId)
+        .single();
+
+      customers = data ? [data] : [];
+    } else {
+      // Cron job - process all active customers
+      const { data } = await supabase
+        .from('bol_customers')
+        .select('id, name')
+        .eq('active', true);
+
+      customers = data || [];
+    }
 
     if (!customers || customers.length === 0) {
       return res.status(200).json({ message: 'No active customers', processed: 0 });
