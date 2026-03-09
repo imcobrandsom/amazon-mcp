@@ -429,25 +429,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
       console.log('[bol-sync-trigger] Running comprehensive keyword enrichment...');
 
-      // Call the new comprehensive keyword enrichment endpoint
-      const host = req.headers.host;
-      const enrichRes = await fetch(`http://${host}/api/bol-keywords-enrich`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customerId: customer.id }),
-      });
+      // Import and call the core enrichment function directly (avoids HTTP timeout issues)
+      const { enrichKeywordsForCustomer } = await import('./_lib/bol-keywords-enrich-core.js');
+      const enrichResult = await enrichKeywordsForCustomer(customer.id);
 
-      if (enrichRes.ok) {
-        const enrichData = await enrichRes.json();
-        console.log('[bol-sync-trigger] Keyword enrichment completed:', enrichData.stats);
+      if (enrichResult.success) {
+        console.log('[bol-sync-trigger] Keyword enrichment completed:', enrichResult.stats);
         (report as any).keywords = {
           status: 'ok',
-          ...enrichData.stats,
+          ...enrichResult.stats,
         };
       } else {
-        const errText = await enrichRes.text();
-        console.error('[bol-sync-trigger] Keyword enrichment failed:', errText);
-        (report as any).keywords = { status: 'failed', error: errText };
+        console.error('[bol-sync-trigger] Keyword enrichment failed:', enrichResult.error);
+        (report as any).keywords = { status: 'failed', error: enrichResult.error };
       }
     } catch (kwErr) {
       console.error('[bol-sync-trigger] Keyword enrichment error:', kwErr);
