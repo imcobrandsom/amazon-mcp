@@ -425,8 +425,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       report.performance = { status: 'failed', error: (e as Error).message };
     }
 
-    // ── Auto-populate keywords if empty (Phase 1 setup) ──────────────────────
+    // ── Keyword Enrichment (Phase 2: AI + Advertising + Search Volume + Category) ──
     try {
+      console.log('[bol-sync-trigger] Running comprehensive keyword enrichment...');
+
+      // Call the new comprehensive keyword enrichment endpoint
+      const host = req.headers.host;
+      const enrichRes = await fetch(`http://${host}/api/bol-keywords-enrich`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerId: customer.id }),
+      });
+
+      if (enrichRes.ok) {
+        const enrichData = await enrichRes.json();
+        console.log('[bol-sync-trigger] Keyword enrichment completed:', enrichData.stats);
+        (report as any).keywords = {
+          status: 'ok',
+          ...enrichData.stats,
+        };
+      } else {
+        const errText = await enrichRes.text();
+        console.error('[bol-sync-trigger] Keyword enrichment failed:', errText);
+        (report as any).keywords = { status: 'failed', error: errText };
+      }
+    } catch (kwErr) {
+      console.error('[bol-sync-trigger] Keyword enrichment error:', kwErr);
+      (report as any).keywords = { status: 'failed', error: (kwErr as Error).message };
+    }
+
+    // ── OLD Phase 1 logic (DEPRECATED - kept for reference, can be removed after testing) ──
+    /* try {
       const { count: keywordCount } = await supabase
         .from('bol_product_keyword_targets')
         .select('id', { count: 'exact', head: true })
@@ -543,7 +572,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .maybeSingle();
 
       if (allProducts) {
-        const inventory = ((allProducts.raw_data as any)?.inventory || []) as Array<{ ean?: string }>;
+        // FIX: raw_data.items (not inventory) — matching the structure from getInventory()
+        const inventory = ((allProducts.raw_data as any)?.items || []) as Array<{ ean?: string }>;
         const { data: keywordCoverage } = await supabase
           .from('bol_product_keyword_targets')
           .select('ean')
@@ -589,30 +619,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           };
 
           let fallbackAdded = 0;
-          for (const product of productsWithoutKeywords.slice(0, 50)) {
-            const categorySlug = eanToCategory.get(product.ean!);
-            const keywords = CATEGORY_KEYWORDS[categorySlug!] || CATEGORY_KEYWORDS['sportkleding'];
+          // FIX: Process ALL products, not just first 50 (remove .slice(0, 50))
+          // Process in batches to avoid hitting limits
+          const batchSize = 100;
+          for (let i = 0; i < productsWithoutKeywords.length; i += batchSize) {
+            const batch = productsWithoutKeywords.slice(i, i + batchSize);
 
-            for (const { keyword, priority } of keywords) {
-              await supabase.from('bol_product_keyword_targets').insert({
+            for (const product of batch) {
+              const categorySlug = eanToCategory.get(product.ean!);
+              const keywords = CATEGORY_KEYWORDS[categorySlug!] || CATEGORY_KEYWORDS['sportkleding'];
+
+              // Bulk insert all keywords for this product
+              const keywordsToInsert = keywords.map(({ keyword, priority }) => ({
                 bol_customer_id: customer.id,
                 ean: product.ean,
                 keyword,
                 priority: categorySlug ? priority : Math.max(3, priority - 3),
                 source: 'category_analysis',
-              }).select('id').maybeSingle();
-              fallbackAdded++;
+              }));
+
+              const { error: insertErr } = await supabase
+                .from('bol_product_keyword_targets')
+                .insert(keywordsToInsert)
+                .select('id');
+
+              if (!insertErr || insertErr.code === '23505') { // 23505 = duplicate key
+                fallbackAdded += keywordsToInsert.length;
+              }
             }
+
+            console.log(`[bol-sync-trigger] Processed batch ${i / batchSize + 1}/${Math.ceil(productsWithoutKeywords.length / batchSize)}`);
           }
 
-          console.log(`[bol-sync-trigger] Added ${fallbackAdded} fallback keywords`);
+          console.log(`[bol-sync-trigger] Added ${fallbackAdded} fallback keywords for ${productsWithoutKeywords.length} products`);
           (report as any).keywords_fallback_added = fallbackAdded;
         }
       }
     } catch (e) {
-      console.error('[bol-sync-trigger] Auto-populate keywords failed:', e);
+      console.error('[bol-sync-trigger] Auto-populate keywords failed (OLD):', e);
       (report as any).keywords_auto_populate_error = (e as Error).message;
     }
+    */
 
     await supabase.from('bol_customers').update({ last_sync_at: new Date().toISOString() }).eq('id', customer.id);
     report.duration_ms = Date.now() - startedAt;

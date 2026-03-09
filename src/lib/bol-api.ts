@@ -325,6 +325,39 @@ export async function triggerSync(
   return data;
 }
 
+// ── Keyword Intelligence API ──────────────────────────────────────────────────
+
+/**
+ * Extract high-value keywords from competitor content using AI
+ */
+export async function extractCompetitorKeywords(
+  customerId: string,
+  limit = 20
+): Promise<{
+  message: string;
+  products_analyzed: number;
+  keywords_added: number;
+  results: Array<{ ean: string; keywords_added: number; keywords: string[] }>;
+}> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error('Not authenticated — please sign in again');
+  }
+
+  const res = await fetch(`${BASE}/bol-keywords-competitor-extract`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ customerId, limit }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
 // ── Content Generator API ─────────────────────────────────────────────────────
 
 export async function getBolContentProposals(customerId: string, ean?: string) {
@@ -453,6 +486,10 @@ export async function getBolProductAnalysis(
   return apiFetch(`/bol-product-analysis?customerId=${customerId}&ean=${encodeURIComponent(ean)}`);
 }
 
+/**
+ * DEPRECATED: Use enrichKeywords instead
+ * Old endpoint for populating keywords from advertising campaigns only
+ */
 export async function populateKeywordsFromAds(customerId: string): Promise<{
   message: string;
   campaigns_processed: number;
@@ -475,6 +512,32 @@ export async function triggerKeywordSync(customerId: string): Promise<{
   errors: number;
 }> {
   return apiFetch(`/bol-keyword-sync`, {
+    method: 'POST',
+    body: JSON.stringify({ customerId }),
+  });
+}
+
+/**
+ * Phase 2: Comprehensive keyword enrichment
+ * Combines AI content extraction + advertising mapping + search volume + category fallbacks + metadata sync
+ */
+export async function enrichKeywords(customerId: string): Promise<{
+  message: string;
+  stats: {
+    products_analyzed: number;
+    ai_keywords_extracted: number;
+    advertising_keywords_mapped: number;
+    category_fallbacks_added: number;
+    search_volumes_fetched: number;
+    total_keywords_inserted: number;
+  };
+  keywords_by_source?: {
+    ai_extraction: number;
+    advertising: number;
+    category_fallback: number;
+  };
+}> {
+  return apiFetch(`/bol-keywords-enrich`, {
     method: 'POST',
     body: JSON.stringify({ customerId }),
   });
