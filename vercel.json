@@ -37,6 +37,10 @@
     {
       "path": "/api/bol-keyword-sync-cron",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/bol-keywords-ai-cron",
+      "schedule": "0 4 * * *"
     }
   ],
   "functions": {
@@ -54,6 +58,9 @@
     },
     "api/bol-keywords-enrich.ts": {
       "maxDuration": 300
+    },
+    "api/bol-keywords-ai-cron.ts": {
+      "maxDuration": 60
     },
     "api/bol-content-upload.ts": {
       "maxDuration": 60,
