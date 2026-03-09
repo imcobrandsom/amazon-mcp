@@ -58,6 +58,7 @@ npm run preview
 | **Phase 1 & 2 - Autonomous Content Agent** | |
 | `bol-product-analysis.ts` | Deep product analysis (completeness + keywords + competitor) |
 | `bol-keywords-enrich.ts` | **Comprehensive keyword enrichment**: AI content extraction + advertising mapping + search volume + category fallbacks + metadata sync (called by main sync) |
+| `bol-keywords-ai-cron.ts` | **Daily AI keyword extraction cron** (04:00 UTC): processes 10 products/day with product-specific AI keyword extraction |
 | `bol-keyword-sync.ts` | Sync keyword metadata (in_title, in_description flags) |
 | `bol-keywords-populate.ts` | DEPRECATED: Use bol-keywords-enrich instead |
 | `bol-keywords-fallback.ts` | DEPRECATED: Integrated into bol-keywords-enrich |
@@ -327,6 +328,7 @@ All prompts include:
 **Daily Cron Jobs** (configured in `vercel.json`):
 - `02:00 UTC` — Main sync for all active customers (`bol-sync-start`)
 - `03:00 UTC` — Keyword metadata sync (`bol-keyword-sync-cron`)
+- `04:00 UTC` — **AI keyword extraction** (`bol-keywords-ai-cron`) - processes 10 products/day with AI
 - `07:00 UTC Monday` — Weekly keyword rankings update (`bol-sync-keywords`)
 - `Every 5min` — Complete pending sync jobs (`bol-sync-complete`)
 - `Every 6h` — Extended sync (`bol-sync-extended`)
