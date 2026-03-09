@@ -372,22 +372,21 @@ Priority schaal:
       const chunk = keywordsToInsert.slice(i, i + chunkSize);
       console.log(`[enrich] Upserting chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(keywordsToInsert.length / chunkSize)} (${chunk.length} keywords)...`);
 
-      const { error: insertErr, count } = await supabase
+      const { error: insertErr } = await supabase
         .from('bol_product_keyword_targets')
         .upsert(chunk, {
           onConflict: 'bol_customer_id,ean,keyword',
           ignoreDuplicates: false,
-        })
-        .select('id', { count: 'exact', head: true });
+        });
 
       if (insertErr) {
         console.error(`[enrich] Insert error for chunk ${Math.floor(i / chunkSize) + 1}:`, insertErr.message);
         console.error('[enrich] Error details:', JSON.stringify(insertErr));
         totalErrors++;
       } else {
-        const inserted = count || 0;
-        totalInserted += inserted;
-        console.log(`[enrich] Chunk ${Math.floor(i / chunkSize) + 1}: inserted ${inserted} keywords`);
+        // Upsert succeeded - count chunk size as inserted/updated
+        totalInserted += chunk.length;
+        console.log(`[enrich] Chunk ${Math.floor(i / chunkSize) + 1}: upserted ${chunk.length} keywords`);
       }
     }
 
