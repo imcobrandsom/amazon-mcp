@@ -126,7 +126,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(404).json({ error: 'No inventory data found' });
     }
 
-    const inventory = ((inventorySnap.raw_data as any)?.inventory || []) as Array<{
+    // FIX: raw_data structure is { items: [...] } not { inventory: [...] }
+    const inventory = ((inventorySnap.raw_data as any)?.items || (inventorySnap.raw_data as any)?.inventory || []) as Array<{
       ean?: string;
       title?: string;
       description?: string;
