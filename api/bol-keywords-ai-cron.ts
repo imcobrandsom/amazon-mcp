@@ -261,17 +261,38 @@ Priority schaal:
         })
         .eq('bol_customer_id', customer.id);
 
+      const hasMoreProducts = (startIndex + batch.length) < productsWithContent.length;
+
       results.push({
         customer: customer.name,
         batch_size: batch.length,
         keywords_extracted: keywordsToInsert.length,
         progress: `${startIndex + batch.length}/${productsWithContent.length}`,
+        has_more: hasMoreProducts,
       });
+
+      // Self-trigger next batch if more products remain
+      if (hasMoreProducts) {
+        console.log(`[ai-cron] More products remaining for ${customer.name}, triggering next batch...`);
+
+        // Trigger self asynchronously (don't wait for response)
+        const host = req.headers.host || 'amazon-mcp-eight.vercel.app';
+        fetch(`https://${host}/api/bol-keywords-ai-cron`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customerId: customer.id }),
+        }).catch(err => {
+          console.error(`[ai-cron] Failed to trigger next batch:`, err.message);
+        });
+      } else {
+        console.log(`[ai-cron] ✅ Completed full cycle for ${customer.name}`);
+      }
     }
 
     return res.status(200).json({
       message: 'AI keyword extraction completed',
       results,
+      next_batch_triggered: results.some(r => r.has_more),
     });
 
   } catch (error) {
