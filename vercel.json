@@ -52,6 +52,9 @@
     "api/bol-sync-competitor-analysis.ts": {
       "maxDuration": 300
     },
+    "api/bol-keywords-enrich.ts": {
+      "maxDuration": 300
+    },
     "api/bol-content-upload.ts": {
       "maxDuration": 60,
       "memory": 1024
