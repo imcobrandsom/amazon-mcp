@@ -357,15 +357,20 @@ Priority schaal:
     console.log('[enrich] Step 5: Skipping search volume fetch (saves ~50s)');
 
     // STEP 6: Insert Keywords
-    console.log('[enrich] Step 6: Inserting keywords...');
+    console.log(`[enrich] Step 6: Inserting ${keywordsToInsert.length} keywords...`);
 
     if (keywordsToInsert.length === 0) {
+      console.log('[enrich] No keywords to insert, returning');
       return { success: true, stats };
     }
 
     const chunkSize = 500;
+    let totalInserted = 0;
+    let totalErrors = 0;
+
     for (let i = 0; i < keywordsToInsert.length; i += chunkSize) {
       const chunk = keywordsToInsert.slice(i, i + chunkSize);
+      console.log(`[enrich] Upserting chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(keywordsToInsert.length / chunkSize)} (${chunk.length} keywords)...`);
 
       const { error: insertErr, count } = await supabase
         .from('bol_product_keyword_targets')
@@ -376,13 +381,18 @@ Priority schaal:
         .select('id', { count: 'exact', head: true });
 
       if (insertErr) {
-        console.error('[enrich] Insert error:', insertErr);
+        console.error(`[enrich] Insert error for chunk ${Math.floor(i / chunkSize) + 1}:`, insertErr.message);
+        console.error('[enrich] Error details:', JSON.stringify(insertErr));
+        totalErrors++;
       } else {
-        stats.total_keywords_inserted += count || 0;
+        const inserted = count || 0;
+        totalInserted += inserted;
+        console.log(`[enrich] Chunk ${Math.floor(i / chunkSize) + 1}: inserted ${inserted} keywords`);
       }
     }
 
-    console.log(`[enrich] Inserted ${stats.total_keywords_inserted} keywords`);
+    stats.total_keywords_inserted = totalInserted;
+    console.log(`[enrich] Total inserted: ${stats.total_keywords_inserted} keywords (${totalErrors} chunk errors)`);
 
     // STEP 7: Sync Metadata
     console.log('[enrich] Step 7: Syncing metadata...');
