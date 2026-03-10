@@ -619,7 +619,9 @@ export async function getAdsAdGroups(adsToken: string, campaignId: string): Prom
   return d.adGroups ?? [];
 }
 
-/** Fetch all product targets (EANs) for a single ad group (paginated POST) */
+/** Fetch all product targets (EANs) for a single ad group (paginated POST).
+ *  NOTE: This returns competitor-product targets (display targeting), NOT the advertised products.
+ *  Use getAdsAdvertisedProducts to get the EANs of products being advertised. */
 export async function getAdsProductTargets(adsToken: string, adGroupId: string): Promise<string[]> {
   const eans: string[] = [];
   let page = 1;
@@ -635,6 +637,33 @@ export async function getAdsProductTargets(adsToken: string, adGroupId: string):
     const items = d.productTargets ?? [];
     for (const item of items) {
       if (item.ean) eans.push(item.ean);
+    }
+    if (items.length < 50) break;
+    page++;
+  }
+
+  return eans;
+}
+
+/** Fetch the EANs of products being ADVERTISED in an ad group (paginated POST).
+ *  Works for all campaign types (keyword, category, and auto targeting).
+ *  These are the products the seller wants to promote — distinct from product-targets
+ *  which are competitor products targeted for display campaigns. */
+export async function getAdsAdvertisedProducts(adsToken: string, adGroupId: string): Promise<string[]> {
+  const eans: string[] = [];
+  let page = 1;
+
+  while (true) {
+    const res = await adsFetch(
+      adsToken,
+      '/advertiser/sponsored-products/campaign-management/ads/list',
+      { method: 'POST', body: JSON.stringify({ page, pageSize: 50, filter: { adGroupIds: [adGroupId] } }) }
+    );
+    if (!res.ok) break;
+    const d = res.data as { ads?: Array<{ ean?: string; state?: string }> };
+    const items = d.ads ?? [];
+    for (const item of items) {
+      if (item.ean && item.state !== 'ARCHIVED') eans.push(item.ean);
     }
     if (items.length < 50) break;
     page++;

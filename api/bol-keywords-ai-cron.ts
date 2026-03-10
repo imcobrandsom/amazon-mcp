@@ -1,18 +1,35 @@
 /**
  * POST /api/bol-keywords-ai-cron
- * Daily AI keyword extraction for 10 products at a time
+ * AI keyword extraction – processes up to 10 products per run.
  *
- * Cron: 0 4 * * * (04:00 UTC daily, after keyword sync at 03:00)
+ * Cron: */15 * * * * (every 15 minutes, as configured in vercel.json)
+ * Completes a full cycle of ~300 products in ~7.5h, then immediately restarts.
  *
  * Strategy:
- * - Process 10 products per day (10 × 2s AI = ~20s execution)
- * - Track progress in bol_ai_extraction_progress table
- * - Extracts keywords from title + description + content basis
- * - Adds product-specific keywords (not generic category keywords)
+ * - Process 10 products per run (up to 10 × 2s AI = ~20s, within 60s maxDuration)
+ * - Track batch progress in bol_ai_extraction_progress table
+ * - Track per-product content hashes in bol_ai_product_hashes table
+ * - Skip products whose content (title + description + basis) hasn't changed → no AI call
+ * - Extracts product-specific keywords (not generic category keywords)
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createHash } from 'crypto';
 import { createAdminClient } from './_lib/supabase-admin.js';
 import Anthropic from '@anthropic-ai/sdk';
+
+/**
+ * Compute a content fingerprint for a product.
+ * Any change in title, description, or content-basis fields will yield a different hash.
+ */
+function computeContentHash(
+  title: string,
+  description: string,
+  basisTitle?: string,
+  basisDescription?: string,
+): string {
+  const raw = [title, description, basisTitle ?? '', basisDescription ?? ''].join('|');
+  return createHash('sha256').update(raw).digest('hex');
+}
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -35,7 +52,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Manual trigger for specific customer
       const { data } = await supabase
         .from('bol_customers')
-        .select('id, name')
+        .select('id, seller_name')
         .eq('id', customerId)
         .single();
 
@@ -44,7 +61,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Cron job - process all active customers
       const { data } = await supabase
         .from('bol_customers')
-        .select('id, name')
+        .select('id, seller_name')
         .eq('active', true);
 
       customers = data || [];
@@ -57,7 +74,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const results = [];
 
     for (const customer of customers) {
-      console.log(`[ai-cron] Processing customer: ${customer.name} (${customer.id})`);
+      console.log(`[ai-cron] Processing customer: ${customer.seller_name} (${customer.id})`);
 
       // Get or create progress record
       let { data: progress } = await supabase
@@ -94,7 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .single();
 
       if (!inventorySnap) {
-        console.log(`[ai-cron] No inventory for ${customer.name}`);
+        console.log(`[ai-cron] No inventory for ${customer.seller_name}`);
         continue;
       }
 
@@ -108,7 +125,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const productsWithContent = inventory.filter(p => p.ean && (p.title || p.description));
 
       if (productsWithContent.length === 0) {
-        console.log(`[ai-cron] No products with content for ${customer.name}`);
+        console.log(`[ai-cron] No products with content for ${customer.seller_name}`);
         continue;
       }
 
@@ -144,12 +161,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // Get content basis
       const { data: contentBasis } = await supabase
-        .from('bol_content_basis')
+        .from('bol_content_base')
         .select('ean, title, description')
         .eq('bol_customer_id', customer.id);
 
       const eanToContentBasis = new Map(
         (contentBasis || []).map(cb => [cb.ean, { title: cb.title, description: cb.description }])
+      );
+
+      // Load stored content hashes for change detection (only fetch EANs in the batch)
+      const batchEans = batch.map(p => p.ean).filter(Boolean) as string[];
+      const { data: existingHashes } = await supabase
+        .from('bol_ai_product_hashes')
+        .select('ean, content_hash')
+        .eq('bol_customer_id', customer.id)
+        .in('ean', batchEans);
+
+      const productHashMap = new Map(
+        (existingHashes || []).map(h => [h.ean, h.content_hash])
       );
 
       const keywordsToInsert: Array<{
@@ -160,7 +189,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         source: string;
       }> = [];
 
+      const hashesToUpsert: Array<{
+        bol_customer_id: string;
+        ean: string;
+        content_hash: string;
+        last_extracted_at: string;
+      }> = [];
+
       let lastProcessedEan = progress.last_processed_ean;
+      let skippedCount = 0;
 
       // Process each product with AI
       for (const product of batch) {
@@ -170,6 +207,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const currentDescription = product.description || '';
         const basisContent = eanToContentBasis.get(product.ean);
         const categorySlug = eanToCategory.get(product.ean);
+
+        // --- Change detection: skip if content hasn't changed ---
+        const currentHash = computeContentHash(
+          currentTitle,
+          currentDescription,
+          basisContent?.title,
+          basisContent?.description,
+        );
+
+        if (productHashMap.get(product.ean) === currentHash) {
+          console.log(`[ai-cron] Skipping EAN ${product.ean} – content unchanged`);
+          lastProcessedEan = product.ean; // Advance cursor even for skipped products
+          skippedCount++;
+          continue;
+        }
 
         const prompt = `Je bent een SEO keyword expert voor Bol.com. Analyseer de volgende productcontent en extraheer relevante zoekwoorden.
 
@@ -242,12 +294,20 @@ Priority schaal:
 
           lastProcessedEan = product.ean;
 
+          // Queue hash update so this product is skipped on next run if content unchanged
+          hashesToUpsert.push({
+            bol_customer_id: customer.id,
+            ean: product.ean,
+            content_hash: currentHash,
+            last_extracted_at: new Date().toISOString(),
+          });
+
           // Rate limit
           await new Promise(resolve => setTimeout(resolve, AI_RATE_LIMIT_MS));
 
         } catch (aiErr) {
           console.error(`[ai-cron] AI extraction failed for EAN ${product.ean}:`, aiErr);
-          // Continue with next product
+          // Do NOT update hash on failure – product will be retried next cycle
         }
       }
 
@@ -267,6 +327,21 @@ Priority schaal:
         }
       }
 
+      // Persist content hashes for successfully processed products
+      if (hashesToUpsert.length > 0) {
+        const { error: hashErr } = await supabase
+          .from('bol_ai_product_hashes')
+          .upsert(hashesToUpsert, { onConflict: 'bol_customer_id,ean', ignoreDuplicates: false });
+
+        if (hashErr) {
+          console.error(`[ai-cron] Hash upsert error:`, hashErr.message);
+        } else {
+          console.log(`[ai-cron] Stored hashes for ${hashesToUpsert.length} products`);
+        }
+      }
+
+      console.log(`[ai-cron] Batch summary: ${hashesToUpsert.length} processed, ${skippedCount} skipped (unchanged)`);
+
       // Update progress
       await supabase
         .from('bol_ai_extraction_progress')
@@ -281,8 +356,10 @@ Priority schaal:
       const hasMoreProducts = (startIndex + batch.length) < productsWithContent.length;
 
       results.push({
-        customer: customer.name,
+        customer: customer.seller_name,
         batch_size: batch.length,
+        processed: hashesToUpsert.length,
+        skipped_unchanged: skippedCount,
         keywords_extracted: keywordsToInsert.length,
         progress: `${startIndex + batch.length}/${productsWithContent.length}`,
         has_more: hasMoreProducts,
@@ -290,7 +367,7 @@ Priority schaal:
 
       // Self-trigger next batch if more products remain
       if (hasMoreProducts) {
-        console.log(`[ai-cron] More products remaining for ${customer.name}, triggering next batch...`);
+        console.log(`[ai-cron] More products remaining for ${customer.seller_name}, triggering next batch...`);
 
         // Trigger self asynchronously (don't wait for response)
         const host = req.headers.host || 'amazon-mcp-eight.vercel.app';
@@ -302,7 +379,7 @@ Priority schaal:
           console.error(`[ai-cron] Failed to trigger next batch:`, err.message);
         });
       } else {
-        console.log(`[ai-cron] ✅ Completed full cycle for ${customer.name}`);
+        console.log(`[ai-cron] ✅ Completed full cycle for ${customer.seller_name}`);
       }
     }
 

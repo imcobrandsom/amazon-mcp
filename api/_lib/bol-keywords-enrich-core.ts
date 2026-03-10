@@ -7,6 +7,7 @@ import {
   getAdsCampaigns,
   getAdsAdGroups,
   getAdsKeywords,
+  getAdsAdvertisedProducts,
   getBolToken,
   getSearchTermVolume,
   sleep,
@@ -18,37 +19,68 @@ const anthropic = new Anthropic({
 });
 
 // Category-based keyword mapping
+// Keys must exactly match category_slug values in bol_product_categories table
 const CATEGORY_KEYWORDS: Record<string, Array<{ keyword: string; priority: number }>> = {
-  'sportlegging': [
+  'sportleggings': [
     { keyword: 'sportlegging', priority: 10 },
     { keyword: 'sportlegging dames', priority: 9 },
     { keyword: 'high waist legging', priority: 8 },
-    { keyword: 'yoga legging', priority: 7 },
-    { keyword: 'sportbroek dames', priority: 7 },
-    { keyword: 'fitness legging', priority: 6 },
+    { keyword: 'yoga legging', priority: 8 },
+    { keyword: 'fitness legging', priority: 7 },
     { keyword: 'hardloop legging', priority: 6 },
+    { keyword: 'compressie legging', priority: 6 },
+  ],
+  'sportbroeken-leggings': [
+    { keyword: 'sportlegging', priority: 10 },
+    { keyword: 'sportbroek dames', priority: 9 },
+    { keyword: 'high waist legging', priority: 8 },
+    { keyword: 'fitness legging', priority: 7 },
+    { keyword: 'trainingsbroek dames', priority: 6 },
+  ],
+  'sportbroeken': [
+    { keyword: 'sportbroek dames', priority: 10 },
+    { keyword: 'trainingsbroek', priority: 9 },
+    { keyword: 'sportshort dames', priority: 8 },
+    { keyword: 'hardloopbroek', priority: 7 },
+    { keyword: 'fietsbroek dames', priority: 6 },
   ],
   'sportshirts-tops': [
     { keyword: 'sportshirt dames', priority: 10 },
-    { keyword: 'sporttop', priority: 9 },
+    { keyword: 'sporttop dames', priority: 9 },
+    { keyword: 'fitness shirt', priority: 8 },
+    { keyword: 'hardloopshirt dames', priority: 7 },
+    { keyword: 'yoga top', priority: 7 },
+    { keyword: 'sport t-shirt dames', priority: 6 },
+  ],
+  'sportshirts': [
+    { keyword: 'sportshirt dames', priority: 10 },
+    { keyword: 'sport t-shirt dames', priority: 9 },
     { keyword: 'fitness shirt', priority: 8 },
     { keyword: 'hardloopshirt', priority: 7 },
-    { keyword: 'yoga top', priority: 7 },
+    { keyword: 'trainingsshirt', priority: 6 },
   ],
-  'sport-bhs': [
-    { keyword: 'sport bh', priority: 10 },
-    { keyword: 'sport bh dames', priority: 9 },
-    { keyword: 'sport beha', priority: 8 },
-    { keyword: 'fitness bh', priority: 7 },
-    { keyword: 'hardloop bh', priority: 6 },
+  'sporttops': [
+    { keyword: 'sporttop dames', priority: 10 },
+    { keyword: 'fitness top', priority: 9 },
+    { keyword: 'yoga top dames', priority: 8 },
+    { keyword: 'sport singlet', priority: 7 },
+    { keyword: 'hardloop top', priority: 6 },
   ],
-  'sportbroeken-shorts': [
-    { keyword: 'sportbroek dames', priority: 10 },
-    { keyword: 'sportshort', priority: 9 },
-    { keyword: 'hardloopbroek', priority: 8 },
-    { keyword: 'fietsbroek', priority: 7 },
-    { keyword: 'trainingsbroek', priority: 6 },
+  'sportvesten': [
+    { keyword: 'sportvest dames', priority: 10 },
+    { keyword: 'hardloopvest', priority: 9 },
+    { keyword: 'fitness vest', priority: 8 },
+    { keyword: 'trainingsjas dames', priority: 7 },
+    { keyword: 'sport hoodie dames', priority: 6 },
   ],
+  'sportsokken': [
+    { keyword: 'sportsokken', priority: 10 },
+    { keyword: 'hardloopsokken', priority: 9 },
+    { keyword: 'fitness sokken', priority: 8 },
+    { keyword: 'compressiekousen sport', priority: 7 },
+    { keyword: 'sokken dames sport', priority: 6 },
+  ],
+  // Generic fallback (used when no matching slug found)
   'sportkleding': [
     { keyword: 'sportkleding', priority: 10 },
     { keyword: 'sportkleding dames', priority: 9 },
@@ -141,7 +173,7 @@ export async function enrichKeywordsForCustomer(customerId: string): Promise<{
 
     // Get uploaded content basis
     const { data: contentBasis } = await supabase
-      .from('bol_content_basis')
+      .from('bol_content_base')
       .select('ean, title, description')
       .eq('bol_customer_id', customerId);
 
@@ -242,62 +274,62 @@ Priority schaal:
 
     console.log(`[enrich] AI extracted ${stats.ai_keywords_extracted} keywords from ${stats.products_analyzed} products`);
 
-    // STEP 3: Advertising API Keyword Mapping
+    // STEP 3: Advertising Keyword Mapping
+    // Strategy:
+    //   A) Load keywords per ad-group from bol_keyword_performance (already in DB, no API call needed)
+    //   B) For each unique ad-group, call /ads/list to get the EANs of the advertised products
+    //      (NOT /product-targets, which is competitor targeting and returns empty for category campaigns)
+    //   C) Map keywords → EANs
     if (customer.ads_client_id && customer.ads_client_secret) {
-      console.log('[enrich] Step 3: Mapping advertising keywords...');
+      console.log('[enrich] Step 3: Mapping advertising keywords from DB + ads API...');
 
       try {
-        const adsToken = await getAdsToken(
-          customer.ads_client_id as string,
-          customer.ads_client_secret as string
-        );
-        const campaigns = await getAdsCampaigns(adsToken);
+        // A) Pull all non-archived keywords from bol_keyword_performance (fresh from today's sync)
+        const { data: dbKeywords } = await supabase
+          .from('bol_keyword_performance')
+          .select('keyword_text, bid, state, ad_group_id')
+          .eq('bol_customer_id', customerId)
+          .neq('state', 'ARCHIVED');
 
-        for (const campaign of (campaigns as Array<{ campaignId?: string; state?: string }>).slice(0, 20)) {
-          if (!campaign.campaignId || campaign.state !== 'ENABLED') continue;
+        if (dbKeywords && dbKeywords.length > 0) {
+          // Group keywords by ad_group_id
+          const keywordsByAdGroup = new Map<string, Array<{ keyword_text: string; bid: number | null; state: string }>>();
+          for (const kw of dbKeywords) {
+            if (!kw.ad_group_id || !kw.keyword_text) continue;
+            const existing = keywordsByAdGroup.get(kw.ad_group_id) ?? [];
+            existing.push(kw);
+            keywordsByAdGroup.set(kw.ad_group_id, existing);
+          }
 
-          const adGroups = await getAdsAdGroups(adsToken, campaign.campaignId);
+          console.log(`[enrich] Found keywords in ${keywordsByAdGroup.size} ad groups from DB`);
 
-          for (const adGroup of (adGroups as Array<{ adGroupId?: string }>).slice(0, 40)) {
-            if (!adGroup.adGroupId) continue;
+          // B) Get EANs per ad group using /ads/list (advertised products, works for all targeting types)
+          const adsToken = await getAdsToken(
+            customer.ads_client_id as string,
+            customer.ads_client_secret as string
+          );
 
-            const [keywords, productTargetsRes] = await Promise.all([
-              getAdsKeywords(adsToken, adGroup.adGroupId),
-              fetch(
-                `https://advertising-api.bol.com/v10/ad-groups/${adGroup.adGroupId}/product-targets`,
-                {
-                  headers: {
-                    Authorization: `Bearer ${adsToken}`,
-                    Accept: 'application/vnd.advertising.v10+json',
-                  },
-                }
-              ),
-            ]);
+          for (const [adGroupId, adGroupKeywords] of keywordsByAdGroup) {
+            const eans = await getAdsAdvertisedProducts(adsToken, adGroupId);
 
-            const productTargetsData = productTargetsRes.ok
-              ? await productTargetsRes.json()
-              : { productTargets: [] };
-            const eans = ((productTargetsData as any).productTargets || [])
-              .map((t: any) => t.ean)
-              .filter(Boolean) as string[];
+            if (eans.length === 0) {
+              console.log(`[enrich] Ad group ${adGroupId}: no advertised products found, skipping`);
+              await sleep(250);
+              continue;
+            }
 
-            for (const kw of keywords as Array<{
-              keywordText?: string;
-              bid?: { amount?: number };
-              state?: string;
-            }>) {
-              if (!kw.keywordText || kw.state === 'ARCHIVED') continue;
-
+            // C) Map each keyword to each advertised EAN
+            for (const kw of adGroupKeywords) {
               const priority = Math.min(
                 10,
-                Math.max(1, Math.round((kw.bid?.amount ?? 0.5) * 10))
+                Math.max(1, Math.round((kw.bid ?? 0.5) * 10))
               );
 
               for (const ean of eans) {
                 keywordsToInsert.push({
                   bol_customer_id: customerId,
                   ean,
-                  keyword: kw.keywordText.toLowerCase().trim(),
+                  keyword: kw.keyword_text.toLowerCase().trim(),
                   priority,
                   source: 'advertising',
                   search_volume: null,
