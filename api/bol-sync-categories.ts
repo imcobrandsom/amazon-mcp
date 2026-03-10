@@ -155,6 +155,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       bol_customer_id: string;
       ean: string;
       category_id: string | null;
+      category_name: string | null;
       category_path: string | null;
       category_slug: string;
       fetched_at: string;
@@ -179,6 +180,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         bol_customer_id: customer.id,
         ean,
         category_id:   categoryId,
+        category_name: categoryName,
         category_path: categoryPath,
         category_slug: categorySlug,
         fetched_at:    new Date().toISOString(),
