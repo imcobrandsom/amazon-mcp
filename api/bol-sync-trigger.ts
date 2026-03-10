@@ -656,6 +656,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     */
 
     await supabase.from('bol_customers').update({ last_sync_at: new Date().toISOString() }).eq('id', customer.id);
+
+    // ── Fire-and-forget: category sync ──────────────────────────────────────────
+    // Kick off category enrichment asynchronously so it doesn't add to sync duration.
+    // bol-sync-categories processes products in BATCH_SIZE=40 batches and self-triggers
+    // until all EANs have a fresh category (stale threshold: 7 days).
+    try {
+      const catHost     = (req.headers.host as string) || 'localhost:3000';
+      const catProtocol = catHost.includes('localhost') ? 'http' : 'https';
+      fetch(`${catProtocol}://${catHost}/api/bol-sync-categories`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ customerId: customer.id }),
+      }).catch((err: Error) => {
+        console.error('[bol-sync-trigger] Category sync trigger failed:', err.message);
+      });
+      console.log('[bol-sync-trigger] Category sync triggered (fire-and-forget)');
+    } catch (_) {
+      // Non-fatal — categories will be picked up by the daily cron at 02:30 UTC
+    }
+
     report.duration_ms = Date.now() - startedAt;
     return res.status(200).json(report);
   }
