@@ -8,6 +8,7 @@ import ClientDetail from './pages/ClientDetail';
 import BolDashboard from './pages/BolDashboard';
 import BolCompetitorResearch from './pages/BolCompetitorResearch';
 import PromptEditor from './pages/PromptEditor';
+import ContentTrainingAdmin from './pages/ContentTrainingAdmin';
 import ConversationHistory from './pages/ConversationHistory';
 import Settings from './pages/Settings';
 import AcademyPage from './pages/AcademyPage';
@@ -63,6 +64,7 @@ function ProtectedRoutes() {
         <Route path="/clients/:clientId/bol" element={<BolDashboard />} />
         <Route path="/clients/:clientId/bol-competitor-research" element={<BolCompetitorResearch />} />
         <Route path="/bol/:customerId/prompts" element={<PromptEditor />} />
+        <Route path="/admin/content-training" element={<ContentTrainingAdmin />} />
         <Route
           path="/clients/:clientId/history"
           element={<ConversationHistory />}
