@@ -377,10 +377,34 @@ export async function generateBolContent(
   reasoning: string;
   estimated_improvement_pct: number;
 }> {
-  return apiFetch('/bol-content-generate', {
+  // Invoke via skill system (Phase 2.5)
+  const result = await apiFetch<{
+    success: boolean;
+    proposal?: BolContentProposal;
+    reasoning?: string;
+    estimated_improvement_pct?: number;
+    error?: string;
+  }>('/skill-invoke', {
     method: 'POST',
-    body: JSON.stringify({ customerId, ean, trigger_reason: triggerReason }),
+    body: JSON.stringify({
+      skillName: 'bol_content_generate',
+      input: {
+        customer_id: customerId,
+        ean,
+        trigger_reason: triggerReason,
+      },
+    }),
   });
+
+  if (!result.success || !result.proposal) {
+    throw new Error(result.error || 'Content generation failed');
+  }
+
+  return {
+    proposal: result.proposal,
+    reasoning: result.reasoning || '',
+    estimated_improvement_pct: result.estimated_improvement_pct || 0,
+  };
 }
 
 export async function approveContentProposal(
@@ -594,4 +618,99 @@ export async function getPriorityQueue(
 
   if (error) throw error;
   return { products: data ?? [] };
+}
+
+// ── Prompt Versioning ─────────────────────────────────────────────────────────
+
+export interface BolPromptVersion {
+  id: string;
+  bol_customer_id: string;
+  version_number: number;
+  version_name: string | null;
+  is_active: boolean;
+  is_ab_test: boolean;
+  system_instructions: string;
+  title_template: string | null;
+  description_template: string | null;
+  title_rules: {
+    min_length?: number;
+    max_length?: number;
+    required_elements?: string[];
+    forbidden_words?: string[];
+    keyword_count?: { min: number; max: number };
+  };
+  description_rules: {
+    min_length?: number;
+    max_length?: number;
+    required_sections?: string[];
+    usp_count?: { min: number; max: number };
+    keyword_density?: { min: number; max: number };
+  };
+  performance_metrics: {
+    total_generations: number;
+    avg_approval_rate: number | null;
+    avg_title_length: number | null;
+    avg_description_length: number | null;
+    avg_keywords_added: number | null;
+  };
+  created_at: string;
+  created_by: string | null;
+  activated_at: string | null;
+  deactivated_at: string | null;
+}
+
+export function listPromptVersions(
+  customerId: string
+): Promise<{ versions: BolPromptVersion[] }> {
+  return apiFetch(`/bol-prompt-versions?customerId=${customerId}`);
+}
+
+export function createPromptVersion(
+  customerId: string,
+  versionName: string,
+  systemInstructions: string,
+  options?: {
+    titleTemplate?: string;
+    descriptionTemplate?: string;
+    titleRules?: Record<string, any>;
+    descriptionRules?: Record<string, any>;
+    activate?: boolean;
+  }
+): Promise<{ version: BolPromptVersion; message: string }> {
+  return apiFetch('/bol-prompt-versions', {
+    method: 'POST',
+    body: JSON.stringify({
+      customerId,
+      versionName,
+      systemInstructions,
+      ...options,
+    }),
+  });
+}
+
+export function updatePromptVersion(
+  versionId: string,
+  updates: Partial<BolPromptVersion>
+): Promise<{ version: BolPromptVersion }> {
+  return apiFetch('/bol-prompt-versions', {
+    method: 'PUT',
+    body: JSON.stringify({ versionId, ...updates }),
+  });
+}
+
+export function deletePromptVersion(
+  versionId: string
+): Promise<{ message: string }> {
+  return apiFetch(`/bol-prompt-versions?versionId=${versionId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function activatePromptVersion(
+  versionId: string
+): Promise<{ message: string; version: BolPromptVersion }> {
+  return apiFetch('/bol-prompt-activate', {
+    method: 'POST',
+    body: JSON.stringify({ versionId }),
+  });
 }

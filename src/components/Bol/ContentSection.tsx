@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Upload,
   Pencil,
   Sparkles,
+  Settings,
   X,
   Check,
   AlertTriangle,
@@ -401,6 +403,14 @@ export default function ContentSection({
           <Pencil size={16} />
           Klantbriefing bewerken
         </button>
+
+        <Link
+          to={`/bol/${bolCustomerId}/prompts`}
+          className="flex items-center gap-2 px-4 py-2 border border-purple-300 text-purple-700 text-sm font-medium rounded-lg hover:bg-purple-50 transition-colors"
+        >
+          <Settings size={16} />
+          Prompt Editor
+        </Link>
 
         <button
           onClick={() => {

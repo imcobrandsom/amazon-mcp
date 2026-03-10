@@ -58,12 +58,13 @@ npm run preview
 | **Phase 1 & 2 - Autonomous Content Agent** | |
 | `bol-product-analysis.ts` | Deep product analysis (completeness + keywords + competitor) |
 | `bol-keywords-enrich.ts` | **Comprehensive keyword enrichment**: AI content extraction + advertising mapping + search volume + category fallbacks + metadata sync (called by main sync) |
-| `bol-keywords-ai-cron.ts` | **Daily AI keyword extraction cron** (04:00 UTC): processes 10 products/day with product-specific AI keyword extraction |
+| `bol-keywords-ai-cron.ts` | **AI keyword extraction cron** (every 15min): processes products with AI keyword extraction |
 | `bol-keyword-sync.ts` | Sync keyword metadata (in_title, in_description flags) |
 | `bol-keywords-populate.ts` | DEPRECATED: Use bol-keywords-enrich instead |
 | `bol-keywords-fallback.ts` | DEPRECATED: Integrated into bol-keywords-enrich |
 | `bol-keywords-competitor-extract.ts` | DEPRECATED: Integrated into bol-keywords-enrich (AI competitor analysis) |
 | `bol-keyword-sync-cron.ts` | Daily cron job to sync keyword metadata (03:00 UTC) |
+| `bol-sync-categories.ts` | Sync product categories (02:30 UTC daily) |
 | `bol-content-generate.ts` | AI content generation using Claude Sonnet 4.5 |
 | `bol-content-approve.ts` | Approve content proposal workflow |
 | `bol-content-reject.ts` | Reject content proposal workflow |
@@ -77,6 +78,8 @@ npm run preview
 | `conversation-summary.ts` | Auto-summary when user leaves chat |
 
 ### API helpers (`/api/_lib/`)
+
+**IMPORTANT**: Function timeout overrides are configured in `vercel.json`. Long-running sync operations have 300s (5min) timeouts. Default is 10s.
 
 | File | Purpose |
 |---|---|
@@ -303,6 +306,94 @@ All prompts include:
 - **Quick filters** — Stock filter (all/low stock/out of stock), advertising filter (all/advertised/not advertised)
 - **Daily keyword metadata sync** — Automated cron job at 03:00 UTC updating in_title/in_description flags
 
+### Phase 2.5: Skills Architecture + Prompt Versioning (NEW)
+
+Content generation uses a **skill-based architecture** with **database-driven prompt versioning** for continuous improvement.
+
+**Skill Invocation Flow:**
+```
+UI "Genereer" button
+  ↓
+generateBolContent(customerId, ean, 'manual')  [src/lib/bol-api.ts]
+  ↓
+POST /api/skill-invoke { skillName: 'bol_content_generate', input: {...} }
+  ↓
+executeBolContentGenerate()  [api/_lib/skills/bol-content-generate.ts]
+  ├─ Fetches active prompt version from database (get_active_prompt_version RPC)
+  ├─ Builds prompt using database template + context data
+  ├─ Calls Claude Sonnet 4.5
+  ├─ Saves proposal with prompt_version_id tracking
+  └─ Updates performance metrics (avg title/desc length, keywords added)
+  ↓
+Returns proposal → UI drawer modal
+```
+
+**Prompt Versioning System:**
+
+Database-driven prompts allow rapid iteration without code deployment:
+
+- **Database**: `bol_content_prompt_versions` table (migration 025)
+- **Multiple versions** per customer with version numbers
+- **One active version** at a time (or A/B test with 2 versions)
+- **Performance tracking**: total generations, avg title/desc length, keywords added
+- **Admin UI**: Visual prompt editor at `/bol/:customerId/prompts`
+
+**Key Features:**
+- ✅ Create new prompt versions via UI or API
+- ✅ Edit system instructions, title/description rules
+- ✅ Test prompts with real products before activation
+- ✅ Compare performance metrics across versions
+- ✅ A/B testing support (random 50/50 split)
+- ✅ Easy rollback to previous versions
+- ✅ Track which version generated each proposal
+
+**Database Functions:**
+- `get_active_prompt_version(customer_id)` — Returns active version (or random A/B)
+- `activate_prompt_version(version_id)` — Activates version, deactivates others
+- `update_prompt_performance(...)` — Updates metrics after generation
+
+**API Endpoints:**
+- `GET/POST /api/bol-prompt-versions` — List/create versions
+- `PUT /api/bol-prompt-versions` — Update version
+- `DELETE /api/bol-prompt-versions` — Delete version (only if not active)
+- `POST /api/bol-prompt-activate` — Activate version
+
+**Improvement Workflow:**
+1. Go to Prompt Editor (via "Prompt Editor" button in Content tab)
+2. Create new version with improved instructions
+3. Test with sample product (enter EAN, click "Test")
+4. Compare metrics with current version
+5. Activate new version if better
+6. Performance tracked automatically on all future generations
+
+**Available Skills:**
+- `bol_content_generate` — Generate SEO-optimized Dutch content for Bol.com products
+  - Input: `customer_id`, `ean`, `trigger_reason` ('manual' | 'quality_score' | 'keyword_trend')
+  - Output: `{ success, proposal, reasoning, estimated_improvement_pct }`
+  - Invocation: `POST /api/skill-invoke` with `{ skillName, input }`
+  - Uses database prompt version (falls back to hardcoded if none exists)
+
+**Shared Logic:**
+- `api/_lib/bol-content-helpers.ts` — Reusable data fetching and proposal saving
+  - `fetchContentGenerationContext()` — Fetches product, keywords, category, brief, competitors
+  - `saveContentProposal()` — Inserts proposal with prompt_version_id tracking
+- `api/_lib/bol-content-prompts.ts` — Original hardcoded prompts (fallback only)
+  - `buildContentOptimizationPrompt()` — Dutch SEO prompt construction
+  - `parseClaudeResponse()` — JSON extraction and validation
+  - `calculateChangesSummary()` — Keyword diff analysis
+- `api/_lib/bol-content-prompt-builder.ts` — **NEW**: Database prompt builder
+  - `getActivePromptVersion()` — Fetches active version from database
+  - `buildDatabasePrompt()` — Builds prompt using version template
+  - `updatePromptPerformance()` — Updates metrics after generation
+
+**Adding New Skills:**
+1. Create skill handler in `/api/_lib/skills/{skill-name}.ts` with `execute{SkillName}()` function
+2. Add case to `/api/skill-invoke.ts` switch statement
+3. Add frontend wrapper in `/src/lib/bol-api.ts` (if needed)
+4. Update CLAUDE.md with usage examples
+
+Time per skill: ~1-2 hours (copy-paste pattern established).
+
 ### Sync Process Workflow
 
 **Main Sync** (`POST /api/bol-sync-trigger` with `syncType: 'main'`):
@@ -325,14 +416,15 @@ All prompts include:
 - Keyword ranking history
 - Catalog enrichment from search results
 
-**Daily Cron Jobs** (configured in `vercel.json`):
-- `02:00 UTC` — Main sync for all active customers (`bol-sync-start`)
-- `03:00 UTC` — Keyword metadata sync (`bol-keyword-sync-cron`)
-- `04:00 UTC` — **AI keyword extraction** (`bol-keywords-ai-cron`) - processes 10 products/day with AI
+**Cron Jobs** (configured in `vercel.json`):
+- `02:00 UTC daily` — Main sync for all active customers (`bol-sync-start`)
+- `02:30 UTC daily` — Product category sync (`bol-sync-categories`)
+- `03:00 UTC daily` — Keyword metadata sync (`bol-keyword-sync-cron`)
 - `07:00 UTC Monday` — Weekly keyword rankings update (`bol-sync-keywords`)
 - `Every 5min` — Complete pending sync jobs (`bol-sync-complete`)
 - `Every 6h` — Extended sync (`bol-sync-extended`)
 - `Every 6h +30min` — Competitor analysis (`bol-sync-competitor-analysis`)
+- `Every 15min` — AI keyword extraction (`bol-keywords-ai-cron`)
 
 ---
 
@@ -438,12 +530,11 @@ CRON_SECRET  # Bearer token for authenticating cron endpoints
 
 ### Phase 1 & 2 Setup (First Time)
 
-1. **Run migrations** in Supabase SQL editor:
+1. **Run migrations** in Supabase SQL editor (run all in order, 24 total):
    ```sql
-   -- Run these in order:
-   supabase/migrations/016_bol_content_intelligence.sql
-   supabase/migrations/016b_bol_advertising_backfill.sql
-   supabase/migrations/017_bol_content_generation.sql
+   -- Core migrations (001-013)
+   -- Content intelligence (014-019)
+   -- See supabase/migrations/ directory for complete list
    ```
 
 2. **Seed category requirements** (FashionPower):
@@ -468,11 +559,13 @@ CRON_SECRET  # Bearer token for authenticating cron endpoints
 
 5. **Verify cron jobs** in Vercel dashboard:
    - `bol-sync-start` (02:00 UTC daily)
+   - `bol-sync-categories` (02:30 UTC daily)
    - `bol-keyword-sync-cron` (03:00 UTC daily)
    - `bol-sync-keywords` (07:00 UTC Monday)
    - `bol-sync-complete` (every 5min)
    - `bol-sync-extended` (every 6h)
    - `bol-sync-competitor-analysis` (every 6h +30min)
+   - `bol-keywords-ai-cron` (every 15min)
 
 ### Every Deploy
 
