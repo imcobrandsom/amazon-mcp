@@ -43,7 +43,11 @@ function toSlug(name: string): string {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  // Accept both POST (fire-and-forget from bol-sync-trigger, manual calls) and
+  // GET (Vercel cron — cron jobs always use GET)
+  if (req.method !== 'POST' && req.method !== 'GET') {
+    return res.status(405).json({ error: 'POST or GET only' });
+  }
 
   const supabase = createAdminClient();
   const { customerId } = (req.body as { customerId?: string }) || {};

@@ -80,6 +80,10 @@
     "api/test-content-tables.ts": {
       "maxDuration": 10,
       "memory": 512
+    },
+    "api/test-category-debug.ts": {
+      "maxDuration": 10,
+      "memory": 512
     }
   }
 }
