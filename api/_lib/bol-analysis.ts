@@ -152,8 +152,8 @@ export function analyzeContent(
     }
 
     // ── Price Analysis ────────────────────────────────────────────────────────────
-    // bol.com v10 offers export: price column is 'price'; fall back to 'unit-price'
-    const priceRaw = offer['price'] ?? offer['unit-price'] ?? offer['Price'] ?? '';
+    // bol.com v10 offers export: camelCase 'bundlePricesPrice'; fall back to historic variants
+    const priceRaw = offer['bundlePricesPrice'] ?? offer['price'] ?? offer['unit-price'] ?? offer['Price'] ?? '';
     // Handle Dutch decimal format (comma) and strip any currency symbol
     const priceNorm = priceRaw.replace(/[€$£\s]/g, '').replace(',', '.');
     const price = parseFloat(priceNorm);
@@ -245,8 +245,8 @@ export function analyzeContent(
 
   if (insightsMap) {
     for (const offer of offers) {
-      // bol.com v10 offers export CSV uses 'offer-id' (hyphen); accept all variants
-      const offerId = offer['offer-id'] ?? offer['Offer Id'] ?? offer['offer_id'] ?? '';
+      // bol.com v10 offers export CSV uses camelCase 'offerId'; accept all historic variants
+      const offerId = offer['offerId'] ?? offer['offer-id'] ?? offer['Offer Id'] ?? offer['offer_id'] ?? '';
       const ins = insightsMap[offerId];
       if (ins) {
         totalVisits      += ins.visits;
