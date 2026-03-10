@@ -52,6 +52,68 @@ export async function getActivePromptVersion(customerId: string): Promise<Prompt
 }
 
 /**
+ * Fetch content examples for category
+ * Returns up to 5 examples (good + bad mix) for few-shot learning
+ */
+async function fetchCategoryExamples(
+  categorySlug: string | null,
+  supabase: ReturnType<typeof createAdminClient>
+): Promise<{
+  goodTitles: Array<{ content: string; reason: string }>;
+  badTitles: Array<{ content: string; reason: string }>;
+  goodDescriptions: Array<{ content: string; reason: string }>;
+  badDescriptions: Array<{ content: string; reason: string }>;
+}> {
+  // Normalize category slug (lowercase, replace spaces with hyphens)
+  const normalizedSlug = categorySlug?.toLowerCase().replace(/\s+/g, '-') || null;
+
+  // Fetch 2 good + 2 bad title examples (rating 5 = good, rating 1 = bad)
+  const { data: goodTitles } = await supabase
+    .from('content_examples')
+    .select('content, reason')
+    .eq('marketplace', 'bol')
+    .eq('category_slug', normalizedSlug)
+    .eq('example_type', 'good_title')
+    .eq('rating', 5)
+    .order('usage_count', { ascending: false })
+    .limit(2);
+
+  const { data: badTitles } = await supabase
+    .from('content_examples')
+    .select('content, reason')
+    .eq('marketplace', 'bol')
+    .eq('category_slug', normalizedSlug)
+    .eq('example_type', 'bad_title')
+    .eq('rating', 1)
+    .limit(2);
+
+  const { data: goodDescriptions } = await supabase
+    .from('content_examples')
+    .select('content, reason')
+    .eq('marketplace', 'bol')
+    .eq('category_slug', normalizedSlug)
+    .eq('example_type', 'good_description')
+    .eq('rating', 5)
+    .limit(1);
+
+  const { data: badDescriptions } = await supabase
+    .from('content_examples')
+    .select('content, reason')
+    .eq('marketplace', 'bol')
+    .eq('category_slug', normalizedSlug)
+    .eq('example_type', 'bad_description')
+    .eq('rating', 1)
+    .limit(1);
+
+  return {
+    goodTitles: goodTitles || [],
+    badTitles: badTitles || [],
+    goodDescriptions: goodDescriptions || [],
+    badDescriptions: badDescriptions || [],
+  };
+}
+
+/**
  * Build prompt using database version
  * Falls back to hardcoded prompt if no version found
  */
@@ -60,6 +122,7 @@ export async function buildDatabasePrompt(
   customerId: string
 ): Promise<{ prompt: string; versionId: string | null }> {
   const version = await getActivePromptVersion(customerId);
+  const supabase = createAdminClient();
 
   if (!version) {
     console.log('[buildDatabasePrompt] No version found, using fallback prompt');
@@ -72,6 +135,16 @@ export async function buildDatabasePrompt(
   console.log(`[buildDatabasePrompt] Using version ${version.version_number}`);
 
   const { product, keywords, categoryRequirements, clientBrief, competitor, currentCompleteness } = context;
+
+  // Fetch category examples for few-shot learning
+  const examples = await fetchCategoryExamples(product.category, supabase);
+  console.log(`[buildDatabasePrompt] Fetched examples:`, {
+    goodTitles: examples.goodTitles.length,
+    badTitles: examples.badTitles.length,
+    goodDescriptions: examples.goodDescriptions.length,
+    badDescriptions: examples.badDescriptions.length,
+    category: product.category
+  });
 
   // Extract high-priority keywords
   const highPriorityKeywords = keywords
@@ -131,6 +204,70 @@ export async function buildDatabasePrompt(
 
   if (competitor) {
     prompt += `## CONCURRENT ANALYSE\n\n${contextVars.competitor_example}\n\n`;
+  }
+
+  // Inject content examples (few-shot learning)
+  if (examples.goodTitles.length > 0 || examples.badTitles.length > 0 ||
+      examples.goodDescriptions.length > 0 || examples.badDescriptions.length > 0) {
+    prompt += `## VOORBEELDEN VAN GOEDE/SLECHTE CONTENT\n\n`;
+
+    if (examples.goodTitles.length > 0) {
+      prompt += `**✅ GOEDE TITELS:**\n`;
+      examples.goodTitles.forEach(ex => {
+        prompt += `- "${ex.content}"\n`;
+        prompt += `  _Waarom: ${ex.reason}_\n\n`;
+      });
+    }
+
+    if (examples.badTitles.length > 0) {
+      prompt += `**❌ SLECHTE TITELS (VERMIJD DIT):**\n`;
+      examples.badTitles.forEach(ex => {
+        prompt += `- "${ex.content}"\n`;
+        prompt += `  _Waarom slecht: ${ex.reason}_\n\n`;
+      });
+    }
+
+    if (examples.goodDescriptions.length > 0) {
+      prompt += `**✅ GOEDE BESCHRIJVING VOORBEELD:**\n`;
+      prompt += `${examples.goodDescriptions[0].content}\n\n`;
+      prompt += `_Waarom: ${examples.goodDescriptions[0].reason}_\n\n`;
+    }
+
+    if (examples.badDescriptions.length > 0) {
+      prompt += `**❌ SLECHTE BESCHRIJVING (VERMIJD DIT):**\n`;
+      prompt += `${examples.badDescriptions[0].content}\n\n`;
+      prompt += `_Waarom slecht: ${examples.badDescriptions[0].reason}_\n\n`;
+    }
+  }
+
+  // Inject category-specific guidelines (Phase 2)
+  if (categoryRequirements?.content_focus_areas && categoryRequirements.content_focus_areas.length > 0) {
+    prompt += `## CATEGORIE SPECIFIEKE RICHTLIJNEN (${product.category})\n\n`;
+
+    if (categoryRequirements.content_focus_areas.length > 0) {
+      prompt += `**Focus areas voor deze categorie:**\n`;
+      prompt += categoryRequirements.content_focus_areas.map(area => `- ${area}`).join('\n');
+      prompt += '\n\n';
+    }
+
+    if (categoryRequirements.tone_guidelines) {
+      prompt += `**Tone of voice:**\n${categoryRequirements.tone_guidelines}\n\n`;
+    }
+
+    if (categoryRequirements.priority_usps && categoryRequirements.priority_usps.length > 0) {
+      prompt += `**Prioriteit USPs (vermeld minstens 2):**\n`;
+      prompt += categoryRequirements.priority_usps.map(usp => `- ${usp}`).join('\n');
+      prompt += '\n\n';
+    }
+
+    // Show attribute templates for context
+    if (categoryRequirements.attribute_templates && Object.keys(categoryRequirements.attribute_templates).length > 0) {
+      prompt += `**Hoe attributen te formuleren:**\n`;
+      Object.entries(categoryRequirements.attribute_templates).forEach(([attr, template]) => {
+        prompt += `- ${attr}: "${template}"\n`;
+      });
+      prompt += '\n';
+    }
   }
 
   // Add rules constraints
