@@ -26,6 +26,9 @@ import {
   ChevronRight,
   MessageCircle,
   Download,
+  ChevronDown,
+  ChevronUp,
+  Settings,
 } from 'lucide-react';
 import GlobalChatPanel from '../components/Chat/GlobalChatPanel';
 import ContentSection from '../components/Bol/ContentSection';
@@ -2674,6 +2677,7 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
     ads:        { status: 'idle', message: '' },
   });
   const [runningAll, setRunningAll] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const setPhase = (phase: BolSyncType, state: PhaseState) =>
     setPhases(prev => ({ ...prev, [phase]: state }));
@@ -2839,49 +2843,71 @@ function SyncPanel({ bolCustomerId }: { bolCustomerId: string }) {
   );
 
   return (
-    <div className="p-3 border-t border-slate-100 flex-shrink-0">
-      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2 px-0.5">
-        Data Sync
-      </p>
-      <div className="space-y-1">
-        {PHASES.map(({ id, label, sub }) => {
-          const ph = phases[id];
-          const running = ph.status === 'running';
-          return (
-            <button
-              key={id}
-              onClick={() => !isAnyRunning && runPhase(id)}
-              disabled={isAnyRunning}
-              className={phaseClass(ph.status, running)}
-            >
-              {phaseIcon(ph.status, running)}
-              <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-semibold leading-tight truncate">{label}</p>
-                <p className="text-[10px] leading-tight mt-0.5 whitespace-pre-wrap opacity-70">
-                  {ph.message || sub}
-                </p>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+    <div className="border-t border-slate-100 flex-shrink-0">
+      {/* Collapsed header */}
       <button
-        onClick={runAll}
-        disabled={isAnyRunning}
-        className={clsx(
-          'mt-2 w-full py-1.5 px-3 rounded-lg text-[11px] font-semibold transition-colors',
-          isAnyRunning
-            ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-            : 'bg-orange-500 text-white hover:bg-orange-600',
-        )}
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full p-3 flex items-center justify-between hover:bg-slate-50 transition-colors"
       >
-        {runningAll
-          ? <span className="flex items-center justify-center gap-1.5">
-              <RefreshCw size={10} className="animate-spin" /> Running…
-            </span>
-          : '▶ Run All'
-        }
+        <div className="flex items-center gap-2">
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
+            Data Sync
+          </p>
+          {isAnyRunning && (
+            <RefreshCw size={10} className="animate-spin text-blue-500" />
+          )}
+        </div>
+        {isExpanded ? (
+          <ChevronUp size={14} className="text-slate-400" />
+        ) : (
+          <ChevronDown size={14} className="text-slate-400" />
+        )}
       </button>
+
+      {/* Expanded content */}
+      {isExpanded && (
+        <div className="px-3 pb-3">
+          <div className="space-y-1">
+            {PHASES.map(({ id, label, sub }) => {
+              const ph = phases[id];
+              const running = ph.status === 'running';
+              return (
+                <button
+                  key={id}
+                  onClick={() => !isAnyRunning && runPhase(id)}
+                  disabled={isAnyRunning}
+                  className={phaseClass(ph.status, running)}
+                >
+                  {phaseIcon(ph.status, running)}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-semibold leading-tight truncate">{label}</p>
+                    <p className="text-[10px] leading-tight mt-0.5 whitespace-pre-wrap opacity-70">
+                      {ph.message || sub}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <button
+            onClick={runAll}
+            disabled={isAnyRunning}
+            className={clsx(
+              'mt-2 w-full py-1.5 px-3 rounded-lg text-[11px] font-semibold transition-colors',
+              isAnyRunning
+                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                : 'bg-orange-500 text-white hover:bg-orange-600',
+            )}
+          >
+            {runningAll
+              ? <span className="flex items-center justify-center gap-1.5">
+                  <RefreshCw size={10} className="animate-spin" /> Running…
+                </span>
+              : '▶ Run All'
+            }
+          </button>
+        </div>
+      )}
     </div>
   );
 }

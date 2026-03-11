@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutGrid, LogOut, ChevronRight, Settings, ChevronDown, ShoppingCart, BookOpen } from 'lucide-react';
+import { LayoutGrid, LogOut, ChevronRight, Settings, ChevronDown, ShoppingCart, BookOpen, Shield } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import clsx from 'clsx';
 
@@ -22,6 +22,9 @@ export default function Layout({ children }: LayoutProps) {
   const [bolOpen, setBolOpen] = useState(() =>
     location.pathname.includes('/bol')
   );
+  const [adminOpen, setAdminOpen] = useState(() =>
+    location.pathname.includes('/admin')
+  );
 
   // Fetch bol customers once on mount (only for admin)
   useEffect(() => {
@@ -41,7 +44,13 @@ export default function Layout({ children }: LayoutProps) {
     if (location.pathname.includes('/bol')) setBolOpen(true);
   }, [location.pathname]);
 
+  // Auto-expand when navigating to an admin page
+  useEffect(() => {
+    if (location.pathname.includes('/admin')) setAdminOpen(true);
+  }, [location.pathname]);
+
   const isBolActive = location.pathname.includes('/bol');
+  const isAdminActive = location.pathname.includes('/admin');
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
@@ -137,6 +146,43 @@ export default function Layout({ children }: LayoutProps) {
                   )}
                 </div>
               )}
+
+              {/* Admin section */}
+              <div>
+                <button
+                  onClick={() => setAdminOpen(o => !o)}
+                  className={clsx(
+                    'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors w-full',
+                    isAdminActive
+                      ? 'text-purple-300'
+                      : 'text-navy-200 hover:bg-navy-800 hover:text-white'
+                  )}
+                >
+                  <Shield size={15} className="flex-shrink-0" />
+                  <span className="flex-1 text-left">Admin</span>
+                  <ChevronDown
+                    size={12}
+                    className={clsx('transition-transform duration-150', adminOpen && 'rotate-180')}
+                  />
+                </button>
+
+                {adminOpen && (
+                  <div className="mt-0.5 ml-2 space-y-0.5">
+                    <Link
+                      to="/admin/content-training"
+                      className={clsx(
+                        'flex items-center gap-2 pl-5 pr-3 py-1.5 rounded-md text-xs transition-colors',
+                        location.pathname === '/admin/content-training'
+                          ? 'bg-purple-500/20 text-purple-300 font-medium'
+                          : 'text-navy-300 hover:bg-navy-800 hover:text-white'
+                      )}
+                    >
+                      <Settings size={11} className="flex-shrink-0 opacity-60" />
+                      Content Training
+                    </Link>
+                  </div>
+                )}
+              </div>
 
               <Link
                 to="/settings"
